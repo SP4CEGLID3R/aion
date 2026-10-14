@@ -10,14 +10,17 @@
 //! framing.rs              → AION 2 frames (opcode + payload), bundles unpacked
 //!        ├─► census.rs    opcode statistics
 //!        ├─► discovery.rs markers, correlation, field inspection
-//!        └─► profile.rs   decoder profile → radar_ingest::WireEvent
+//!        ├─► aion2.rs     built-in hidden-cube decoder → radar_ingest::WireEvent
+//!        └─► profile.rs   user decoder profiles → radar_ingest::WireEvent
 //! source.rs               all of it as a radar DataSource, with recording
 //! ```
 //!
 //! Nothing here sends, injects or modifies traffic, or touches the game
-//! process. No packet layout for cubes is built in: it comes from a decoder
-//! profile that is found with the discovery tools and validated by a person.
+//! process. The built-in decoder implements layouts documented, with
+//! evidence, by the aion2-cube-radar project (see `aion2.rs`); everything
+//! else comes from profiles checked against recordings.
 
+pub mod aion2;
 pub mod census;
 pub mod discovery;
 pub mod framing;
@@ -30,7 +33,9 @@ pub mod source;
 pub mod streams;
 pub mod synthetic;
 
+pub use aion2::{Aion2Config, Aion2Status};
 pub use profile::DecoderProfile;
 pub use source::{
-    add_marker, CaptureConfig, CaptureInput, CaptureSource, CaptureStatus, SharedStatus,
+    add_marker, CaptureConfig, CaptureInput, CaptureSource, CaptureStatus, DecoderChoice,
+    SharedStatus,
 };

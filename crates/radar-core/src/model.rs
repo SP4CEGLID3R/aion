@@ -51,6 +51,10 @@ pub enum CubeEventKind {
     Despawned,
     /// The source confirms the cube was collected (gone, with a reason).
     Collected,
+    /// The source can no longer vouch for the cube (e.g. it left the range
+    /// the server reports). It may still exist, so it is not "gone", but it
+    /// is no longer verified: it becomes stale at once.
+    Lost,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

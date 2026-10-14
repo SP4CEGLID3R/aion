@@ -1,9 +1,15 @@
 # Packet capture: from your game traffic to cubes on the radar
 
-The radar can read AION 2's traffic directly: passively, from your own PC,
-the same way the Aether DPS meter does. **Which packet announces a cube is not
-known yet**, so there is no built-in cube decoder. This guide is how to find
-it from your own sessions and turn it on.
+The radar reads AION 2's traffic directly: passively, from your own PC, the
+same way the Aether DPS meter does. **The built-in decoder already knows the
+hidden-cube packets** for the global client (build 25800038): see
+[05-aion2-protocol.md](./05-aion2-protocol.md). Choose *Packet capture*,
+keep the decoder on *AION 2 hidden cubes (built-in)*, and you're done.
+
+The rest of this guide is for when that isn't enough: a zone whose cube
+type isn't known, or a game patch that moved the opcodes. It shows how to
+find packets from your own sessions and either fix `aion2-decoder.json` or
+write your own decoder profile.
 
 > [!WARNING]
 > Using any third-party tool with AION 2 may break NCSoft's terms of service

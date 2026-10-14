@@ -91,15 +91,43 @@ pub enum DataSourceConfig {
         /// Replay a `.pcap`/`.pcapng` instead of capturing live.
         #[serde(default)]
         file: Option<String>,
-        /// Decoder profile JSON. Without one (or unvalidated), nothing is drawn.
+        /// What turns game packets into cubes.
+        #[serde(default)]
+        decoder: CaptureDecoder,
+        /// Decoder profile JSON (decoder = profile). Unvalidated draws nothing.
         #[serde(default, rename = "profilePath")]
         profile_path: Option<String>,
+        /// Which game axis is map north (built-in decoder).
+        #[serde(default)]
+        north: CaptureNorth,
         /// Record the game connection (and markers) for discovery work.
         #[serde(default)]
         record: bool,
     },
     /// No source: the radar shows only its "no data" state.
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureDecoder {
+    /// Built-in AION 2 hidden-cube decoder.
+    #[default]
+    Aion2,
+    /// A user-written decoder profile.
+    Profile,
+    /// Census and recording only.
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureNorth {
+    /// Map north = world −Y (community finding, unconfirmed).
+    #[default]
+    NegY,
+    /// Map north = world +Y.
+    PosY,
 }
 
 fn default_seed() -> u64 {
@@ -415,7 +443,9 @@ mod tests {
             DataSourceConfig::PacketCapture {
                 device: None,
                 file: None,
+                decoder: CaptureDecoder::Aion2,
                 profile_path: Some("p.json".into()),
+                north: CaptureNorth::NegY,
                 record: true
             }
         );

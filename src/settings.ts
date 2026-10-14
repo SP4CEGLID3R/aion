@@ -52,6 +52,7 @@ function fill(s: RadarSettings): void {
     const v = getPath(s, el.name);
     if (el instanceof HTMLInputElement && el.type === "checkbox") el.checked = Boolean(v);
     else if (el instanceof HTMLInputElement && el.type === "color") el.value = sixDigit(String(v ?? "#000000"));
+    else if (el instanceof HTMLSelectElement && (v === undefined || v === null)) el.selectedIndex = 0;
     else el.value = v === undefined || v === null ? "" : String(v);
   }
   showSourceSection(s.dataSource.kind);
@@ -93,11 +94,15 @@ function readSource(): DataSourceConfig {
         const v = form.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="dataSource.${name}"]`)!.value.trim();
         return v === "" ? null : v;
       };
+      const select = (name: string) =>
+        form.querySelector<HTMLSelectElement>(`[name="dataSource.${name}"]`)!.value;
       return {
         kind,
         device: text("device"),
         file: text("file"),
+        decoder: (select("decoder") || "aion2") as "aion2" | "profile" | "none",
         profilePath: text("profilePath"),
+        north: (select("north") || "neg_y") as "neg_y" | "pos_y",
         record: val("record").checked,
       };
     }
@@ -190,7 +195,7 @@ function renderCapture(c: CaptureStatus | null): void {
   section.hidden = c === null;
   if (!c) return;
   const notes = document.querySelector<HTMLElement>("#capture-notes")!;
-  const lines = [...c.notes, ...(c.error ? [`Error: ${c.error}`] : [])];
+  const lines = [...c.notes, ...(c.aion2?.warnings ?? []), ...(c.error ? [`Error: ${c.error}`] : [])];
   notes.hidden = lines.length === 0;
   notes.textContent = lines.join(" ");
 
@@ -204,8 +209,17 @@ function renderCapture(c: CaptureStatus | null): void {
     ["Game frames", String(c.frames)],
     ["Bundles (bad)", `${s.framing.bundles} (${s.framing.badBundles})`],
     ["Resyncs / gaps", `${s.framing.resyncs} / ${s.gaps}`],
-    ["Decoder profile", c.profile ? `${c.profile}${c.profileValidated ? " (validated)" : " (NOT validated)"}` : "none"],
-    ["Decoded / unreadable", `${c.decoded} / ${c.decodeErrors}`],
+    ["Decoder", c.decoder ? `${c.decoder}${c.decoderActive ? "" : " (NOT drawing: not validated)"}` : "none"],
+    ...(c.aion2
+      ? ([
+          ["Zone", c.aion2.zone ?? "not seen yet (changes on loading screens)"],
+          ["Your character", c.aion2.selfId !== null ? `id ${c.aion2.selfId}` : "not identified yet — cast a buff on yourself"],
+          ["Your position", c.aion2.selfFixAgeMs !== null ? `${Math.round(c.aion2.selfFixAgeMs / 1000)} s old` : "not received yet"],
+          ["Hidden cubes in range", String(c.aion2.cubesLive)],
+          ["Cubes seen this session", String(c.aion2.cubesSeenTotal)],
+          ["Learned cube templates", c.aion2.learnedTemplates.join(", ") || "none"],
+        ] as [string, string][])
+      : ([["Decoded / unreadable", `${c.decoded} / ${c.decodeErrors}`]] as [string, string][])),
     ["Recording", c.recording ? `${c.recording} (${Math.round(c.recordingBytes / 1024)} KB)` : "off"],
     ["Markers", c.markersFile ? `${c.markers} in ${c.markersFile}` : "—"],
   ];

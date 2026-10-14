@@ -102,7 +102,10 @@ function bannerText(frame: RadarFrame | null, backendSilent: boolean): string | 
     if (src?.state === "waiting") return `Waiting for telemetry — ${src.detail}`;
     return src?.detail ? `Waiting for player position — ${src.detail}` : "Waiting for player position";
   }
-  if (frame.player.stale) return "Player position is stale — positions may be off";
+  if (frame.player.stale) {
+    const age = Math.round(frame.player.ageMs / 1000);
+    return `Your position is ${age} s old — the game sends it only with events like your buffs`;
+  }
   if (src?.state === "finished") return "Replay finished";
   return null;
 }

@@ -1,5 +1,6 @@
 //! The capture data source: packets → TCP → AION 2 frames → census, optional
-//! recording, and (with a validated profile) radar events.
+//! recording, and radar events from the built-in AION 2 decoder or a
+//! validated decoder profile.
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -14,6 +15,7 @@ use radar_ingest::source::{DataSource, Emit, SourceError};
 use radar_ingest::{SourceMessage, WireEvent};
 use serde::Serialize;
 
+use crate::aion2::{Aion2Config, Aion2Decoder, Aion2Status};
 use crate::census::{Census, OpcodeRow};
 use crate::discovery::{append_marker, Marker};
 use crate::live::{Next, PcapApi};
@@ -35,10 +37,21 @@ pub enum CaptureInput {
     File { path: PathBuf },
 }
 
+/// What turns game frames into radar events.
+#[derive(Debug, Clone)]
+pub enum DecoderChoice {
+    /// The built-in hidden-cube decoder (layouts documented in `aion2.rs`).
+    Aion2(Box<Aion2Config>),
+    /// A user-written profile; draws only when marked validated.
+    Profile(DecoderProfile),
+    /// Census and recording only.
+    None,
+}
+
 #[derive(Debug, Clone)]
 pub struct CaptureConfig {
     pub input: CaptureInput,
-    pub profile: Option<DecoderProfile>,
+    pub decoder: DecoderChoice,
     /// Write a `.pcap` of the game connection(s) here.
     pub record_dir: Option<PathBuf>,
 }
@@ -53,8 +66,12 @@ pub struct CaptureStatus {
     pub streams: StreamStats,
     pub census: Vec<OpcodeRow>,
     pub frames: u64,
-    pub profile: Option<String>,
-    pub profile_validated: bool,
+    /// Which decoder runs ("AION 2 built-in", a profile name, or none).
+    pub decoder: Option<String>,
+    /// Whether decoded events reach the radar.
+    pub decoder_active: bool,
+    /// Built-in decoder details: own character, zone, live cubes, warnings.
+    pub aion2: Option<Aion2Status>,
     /// Events decoded by the profile (sent to the radar only when validated).
     pub decoded: u64,
     pub decode_errors: u64,
@@ -96,11 +113,17 @@ pub struct CaptureSource {
     status: SharedStatus,
 }
 
+enum Decoding {
+    Aion2(Box<Aion2Decoder>),
+    Profile(Decoder),
+    None,
+}
+
 /// Everything after "a packet arrived", shared by live and file input.
 struct Pipeline {
     streams: GameStreams,
     census: Census,
-    decoder: Option<Decoder>,
+    decoder: Decoding,
     send_events: bool,
     recorder: Option<Recorder>,
     frames: u64,
@@ -174,30 +197,40 @@ impl Recorder {
 
 impl Pipeline {
     fn new(cfg: &CaptureConfig, status: &SharedStatus) -> Result<Pipeline, SourceError> {
-        let decoder = match &cfg.profile {
-            Some(p) => {
-                Some(Decoder::new(p.clone()).map_err(|e| SourceError::Invalid(e.to_string()))?)
+        let invalid = |e: String| SourceError::Invalid(e);
+        let (decoder, name, send_events) = match &cfg.decoder {
+            DecoderChoice::Aion2(c) => {
+                let d = Aion2Decoder::new((**c).clone()).map_err(invalid)?;
+                let name = format!("AION 2 built-in ({})", c.client_build);
+                (Decoding::Aion2(Box::new(d)), Some(name), true)
             }
-            None => None,
+            DecoderChoice::Profile(p) => {
+                let d = Decoder::new(p.clone()).map_err(|e| invalid(e.to_string()))?;
+                (Decoding::Profile(d), Some(p.name.clone()), p.validated)
+            }
+            DecoderChoice::None => (Decoding::None, None, false),
         };
-        let send_events = decoder.as_ref().is_some_and(|d| d.profile().validated);
         {
             let mut s = lock(status);
-            s.profile = cfg.profile.as_ref().map(|p| p.name.clone());
-            s.profile_validated = send_events;
+            s.decoder = name;
+            s.decoder_active = send_events;
             s.notes.clear();
             match &decoder {
-                None => s.notes.push(
-                    "No decoder profile: capturing for the opcode census and recording only. \
-                     No cube is shown until a profile is found and validated."
-                        .into(),
-                ),
-                Some(_) if !send_events => s.notes.push(
+                Decoding::None => s
+                    .notes
+                    .push("No decoder: capturing for the packet census and recording only.".into()),
+                Decoding::Profile(_) if !send_events => s.notes.push(
                     "The decoder profile is not marked validated: it decodes for diagnostics, \
                      but nothing is sent to the radar."
                         .into(),
                 ),
-                Some(_) => {}
+                Decoding::Aion2(_) => s.notes.push(
+                    "Hidden cubes are recognised in Verteron (verified templates). Other zones' \
+                     cube templates are learned when you open a cube with a key. Your own \
+                     position only arrives with events such as your buffs."
+                        .into(),
+                ),
+                Decoding::Profile(_) => {}
             }
         }
         let recorder = match &cfg.record_dir {
@@ -235,6 +268,7 @@ impl Pipeline {
                 rec.packet(self.streams.kind(seg.src, seg.dst), key, t_ms, ip);
             }
         }
+        let mut out: Vec<WireEvent> = Vec::new();
         for ev in events {
             match ev {
                 StreamEvent::GameStream {
@@ -244,37 +278,57 @@ impl Pipeline {
                 } => {
                     log::info!("game stream {conn}: {flow} (replaces {replaced:?})");
                     // A new connection means new entity ids: reset the radar.
-                    if self.send_events
-                        && !emit(SourceMessage::Event(WireEvent::ZoneChanged {
-                            t: t_out,
-                            zone: format!("connection-{conn}"),
-                        }))
-                    {
-                        return false;
+                    if let Decoding::Aion2(d) = &mut self.decoder {
+                        d.on_new_connection();
+                    }
+                    out.push(WireEvent::ZoneChanged {
+                        t: t_out,
+                        zone: format!("connection-{conn}"),
+                    });
+                }
+                StreamEvent::Gap { .. } => {
+                    if let Decoding::Aion2(d) = &mut self.decoder {
+                        out.extend(d.on_gap(t_out));
                     }
                 }
                 StreamEvent::Frame { frame, .. } => {
                     self.frames += 1;
                     self.census.observe(&frame, t_ms);
-                    let Some(dec) = &mut self.decoder else {
-                        continue;
-                    };
-                    if let Some(ev) = dec.decode(&frame, t_out) {
-                        if self.send_events && !emit(SourceMessage::Event(ev)) {
-                            return false;
-                        }
+                    match &mut self.decoder {
+                        Decoding::Aion2(d) => out.extend(d.on_frame(&frame, t_out)),
+                        Decoding::Profile(d) => out.extend(d.decode(&frame, t_out)),
+                        Decoding::None => {}
                     }
                 }
             }
         }
-        true
+        if let Decoding::Aion2(d) = &mut self.decoder {
+            out.extend(d.tick(t_out));
+        }
+        self.send(out, emit)
+    }
+
+    /// Timers that run without packets (presence confirmations).
+    fn tick(&mut self, t_out: Millis, emit: &mut Emit<'_>) -> bool {
+        let out = match &mut self.decoder {
+            Decoding::Aion2(d) => d.tick(t_out),
+            _ => Vec::new(),
+        };
+        self.send(out, emit)
+    }
+
+    fn send(&mut self, events: Vec<WireEvent>, emit: &mut Emit<'_>) -> bool {
+        if !self.send_events {
+            return true;
+        }
+        events.into_iter().all(|e| emit(SourceMessage::Event(e)))
     }
 
     fn publish(&mut self, status: &SharedStatus) {
         if let Some(r) = &mut self.recorder {
             let _ = r.writer.flush();
         }
-        if let Some(d) = &self.decoder {
+        if let Decoding::Profile(d) = &self.decoder {
             for op in d.opcodes() {
                 self.census.mark_decoded(op);
             }
@@ -284,9 +338,17 @@ impl Pipeline {
         s.frames = self.frames;
         s.streams = self.streams.stats();
         s.census = self.census.rows().into_iter().take(60).collect();
-        if let Some(d) = &self.decoder {
-            s.decoded = d.decoded;
-            s.decode_errors = d.field_errors;
+        match &self.decoder {
+            Decoding::Profile(d) => {
+                s.decoded = d.decoded;
+                s.decode_errors = d.field_errors;
+            }
+            Decoding::Aion2(d) => {
+                let st = d.status(now_ms());
+                s.decoded = st.cubes_seen_total;
+                s.aion2 = Some(st);
+            }
+            Decoding::None => {}
         }
         if let Some(r) = &self.recorder {
             s.recording_bytes = r.writer.bytes_written();
@@ -357,7 +419,7 @@ impl CaptureSource {
             if pipe.send_events {
                 ""
             } else {
-                " — census only, no decoder"
+                " — census only, nothing decoded for the radar"
             }
         );
         if !emit(SourceMessage::Status(SourceState::Connected, detail)) {
@@ -383,6 +445,9 @@ impl CaptureSource {
                         }
                     }
                 }
+            }
+            if !pipe.tick(now_ms(), emit) {
+                return Ok(());
             }
             if last_status.elapsed() >= STATUS_EVERY {
                 pipe.publish(&self.status);
@@ -430,6 +495,10 @@ impl CaptureSource {
             let due = start + Duration::from_millis(offset as u64);
             while Instant::now() < due {
                 if stop.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+                let played = start.elapsed().as_millis() as Millis;
+                if !pipe.tick(start_ms + played, emit) {
                     return Ok(());
                 }
                 std::thread::sleep((due - Instant::now()).min(Duration::from_millis(20)));
@@ -480,8 +549,9 @@ impl DataSource for CaptureSource {
     }
 }
 
-/// Runs a capture file through framing (and a profile) as fast as possible.
-/// Used by the CLI and tests.
+/// Runs a capture file through framing (and a decoder) as fast as possible.
+/// Used by the CLI and tests. Decoded events are returned whether or not a
+/// profile is validated: this is the tool for checking one.
 pub struct Offline {
     pub census: Census,
     pub samples: Vec<crate::discovery::Sample>,
@@ -489,42 +559,55 @@ pub struct Offline {
     pub streams: StreamStats,
     pub decoded: u64,
     pub decode_errors: u64,
+    pub aion2: Option<Aion2Status>,
 }
 
 pub fn process_records(
     records: &[pcapfile::Record],
-    profile: Option<DecoderProfile>,
+    decoder: DecoderChoice,
     keep_samples: bool,
 ) -> Result<Offline, String> {
     let mut streams = GameStreams::new();
     let mut census = Census::new();
-    let mut decoder = profile
-        .map(Decoder::new)
-        .transpose()
-        .map_err(|e| e.to_string())?;
+    let mut decoder = match decoder {
+        DecoderChoice::Aion2(c) => Decoding::Aion2(Box::new(Aion2Decoder::new(*c)?)),
+        DecoderChoice::Profile(p) => Decoding::Profile(Decoder::new(p).map_err(|e| e.to_string())?),
+        DecoderChoice::None => Decoding::None,
+    };
     let mut samples = Vec::new();
     let mut events = Vec::new();
     let mut seen_conns = HashSet::new();
+    let mut last_t = 0;
     for r in records {
         let Some(seg) = net::parse_frame(r.linktype, &r.data) else {
             continue;
         };
+        let t = r.t_ms as Millis;
+        last_t = t;
         for ev in streams.push(&seg, r.t_ms) {
             match ev {
                 StreamEvent::GameStream { conn, .. } => {
                     if seen_conns.insert(conn) {
+                        if let Decoding::Aion2(d) = &mut decoder {
+                            d.on_new_connection();
+                        }
                         events.push(WireEvent::ZoneChanged {
-                            t: r.t_ms as Millis,
+                            t,
                             zone: format!("connection-{conn}"),
                         });
                     }
                 }
+                StreamEvent::Gap { .. } => {
+                    if let Decoding::Aion2(d) = &mut decoder {
+                        events.extend(d.on_gap(t));
+                    }
+                }
                 StreamEvent::Frame { conn, t_ms, frame } => {
                     census.observe(&frame, t_ms);
-                    if let Some(d) = &mut decoder {
-                        if let Some(e) = d.decode(&frame, t_ms as Millis) {
-                            events.push(e);
-                        }
+                    match &mut decoder {
+                        Decoding::Aion2(d) => events.extend(d.on_frame(&frame, t)),
+                        Decoding::Profile(d) => events.extend(d.decode(&frame, t)),
+                        Decoding::None => {}
                     }
                     if keep_samples {
                         samples.push(crate::discovery::Sample {
@@ -537,18 +620,30 @@ pub fn process_records(
                 }
             }
         }
-    }
-    if let Some(d) = &decoder {
-        for op in d.opcodes() {
-            census.mark_decoded(op);
+        if let Decoding::Aion2(d) = &mut decoder {
+            events.extend(d.tick(t));
         }
     }
+    let (decoded, decode_errors, aion2) = match &decoder {
+        Decoding::Profile(d) => {
+            for op in d.opcodes() {
+                census.mark_decoded(op);
+            }
+            (d.decoded, d.field_errors, None)
+        }
+        Decoding::Aion2(d) => {
+            let st = d.status(last_t);
+            (st.cubes_seen_total, 0, Some(st))
+        }
+        Decoding::None => (0, 0, None),
+    };
     Ok(Offline {
         census,
         samples,
         events,
         streams: streams.stats(),
-        decoded: decoder.as_ref().map_or(0, |d| d.decoded),
-        decode_errors: decoder.as_ref().map_or(0, |d| d.field_errors),
+        decoded,
+        decode_errors,
+        aion2,
     })
 }

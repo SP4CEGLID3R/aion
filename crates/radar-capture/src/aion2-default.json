@@ -1,0 +1,47 @@
+{
+  "_doc": "Built-in AION 2 decoder configuration. Opcodes are the two bytes on the wire, as hex. A copy named aion2-decoder.json in the app's config folder replaces this after a game patch. Facts and evidence: docs/05-aion2-protocol.md.",
+  "clientBuild": "Steam build 25800038 (global, 2026-10-09)",
+  "source": "dennisreichenberg/aion2-cube-radar docs/FINDINGS.md (2026-10-13): own captures, independently re-implemented here",
+  "opcodes": {
+    "heartbeat": "0036",
+    "selfInfo": "3336",
+    "mapLoad": "2136",
+    "teleport": "2336",
+    "objectSpawn": "3436",
+    "objectRemoved": "3536",
+    "openStart": "3836",
+    "openDone": "3a36",
+    "posBuffA": "2a38",
+    "posBuffB": "2b38",
+    "posCast": "0238",
+    "posTarget": "0e38"
+  },
+  "selfIdOpcodes": ["4a36", "4437", "4637", "038d", "028d", "338a"],
+  "cubeTemplates": [
+    {
+      "template": 1200039,
+      "zone": "Verteron",
+      "status": "verified",
+      "evidence": "Two cubes opened with a key; both positions equal known Verteron cube spots exactly (FINDINGS B5)"
+    },
+    {
+      "template": 1200041,
+      "zone": "Verteron",
+      "status": "verified",
+      "evidence": "Opened with the key; position equals a known cube spot exactly, including height (FINDINGS B9)"
+    },
+    {
+      "template": 1301199,
+      "zone": "Altgard?",
+      "status": "hypothesis",
+      "evidence": "One third-party source (Cube Watch test vector), not seen in a verified capture"
+    }
+  ],
+  "useHypotheses": false,
+  "keyItem": 630900003,
+  "mapZones": { "1010": "Verteron" },
+  "unitsPerMeter": 100,
+  "north": "neg_y",
+  "seenIntervalMs": 2000,
+  "streamTimeoutMs": 3000
+}

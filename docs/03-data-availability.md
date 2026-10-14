@@ -4,30 +4,29 @@
 
 | Question | Answer |
 |---|---|
-| Does the radar read AION 2 data today? | **It captures and frames it**, but the cube and player-position packets are not identified, so nothing is drawn from the game until you find them with the discovery tools and write a validated decoder profile ([guide](./04-packet-capture.md)) |
-| Which AION 2 client versions are supported? | **None are verified.** The radar is game-agnostic: it shows whatever a validated source sends in the [Radar Event Protocol](./radar-event-protocol.md) |
+| Does the radar read AION 2 data today? | **Yes, with packet capture:** hidden cubes in Verteron (templates verified by aion2-cube-radar), other zones once a cube is opened with a key, and your own position from event packets ([evidence](./05-aion2-protocol.md)). Not yet tried live by this project |
+| Which AION 2 client versions are supported? | The global client, Steam build **25800038**, per the source captures. Later patches may move opcodes; they are configurable (`aion2-decoder.json`) |
 | What does it run on today? | Passive packet capture with a decoder profile, the built-in synthetic simulator, replay files (`.jsonl`, `.srf`, `.pcap`, `.pcapng`), and a loopback telemetry socket |
 | Can the Aether DPS meter supply the data? | **No.** It parses combat, names, summons and HP only, with no positions and no cubes, and it has no external API ([research](./01-dps-meter-research.md)) |
 
 ## Data the radar needs, and what is known about each
 
-| Needed | Why | Known source | Evidence | Confidence |
-|---|---|---|---|---|
-| Player position | Radar centre | None | Aether parses no position packet | — |
-| Player heading | Heading-up mode | None | — | — |
-| Cube spawn event with a stable id and position | Adds a marker | None | Aether's `41 36` "entity spawn" yields id + mob code; its documented layout has unparsed gaps and **no** documented position | Unverified. Not assumed |
-| Cube despawn / collection event | Removes a marker | None | Aether reads HP and deaths for combat targets only | — |
-| Periodic presence confirmation | Keeps a marker from going stale | None | — | — |
-| Zone/instance change | Invalidates ids | Used by packet capture: a new game connection resets the radar | Aether: a new game connection = zone change; entity ids are per connection | Documented by Aether for combat entities |
-| Coordinate frame (axes, units, origin) | Correct projection | None | — | — |
+| Needed | Known source | Confidence |
+|---|---|---|
+| Cube spawn with id and position | `34 36` object spawn, cube templates 1200039 / 1200041 | Verified in Verteron by aion2-cube-radar; checked here against its captures |
+| Cube opened | `35 36` reason 04 (after `38 36` / `3a 36`) | Verified |
+| Cube out of range | `35 36` reason 01 | Seen for other objects; treated as "no longer verified" (stale) |
+| Presence while in range | No removal while the stream is alive | Follows from the server reporting removals; the radar re-confirms every 2 s and stops if the stream stalls |
+| Player position | `2a 38`, `2b 38`, `02 38`, `0e 38`, `21 36`, `23 36` | Verified, but event-driven: can be tens of seconds old while just walking |
+| Player heading | Not sent by the game | — (radar is north-up) |
+| Zone change | New game connection; `21 36` map id | Verified |
+| Coordinate frame | cm; north = −Y | Units supported by evidence; north unconfirmed (switchable) |
+| Cube templates outside Verteron | Learned at run time from the cube key | Altgard 1301199 is a single-source hypothesis, off by default |
 
 ## What is deliberately not done
 
-* **No cube or position packet layout is built in or guessed.** Only the
-  stream framing is implemented, as Aether documents it (verified there
-  against global recordings, not yet by this project). Nothing verified shows
-  which packet carries cube coordinates, so that comes from a decoder profile
-  you derive from your own recordings.
+* **Nothing guessed.** Only layouts with documented evidence are built in;
+  single-source hypotheses are off by default.
 * **No static map data is shown.** Aether's old map used a survey of
   "hidden cube" locations from AION2 Hub. Those are possible spawn locations,
   not live cubes, and showing them would break requirement 7.

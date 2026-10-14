@@ -8,11 +8,15 @@ mod store;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use radar_capture::aion2::North;
 use radar_capture::live::{Device, PcapApi};
 use radar_capture::{
-    CaptureConfig, CaptureInput, CaptureSource, CaptureStatus, DecoderProfile, SharedStatus,
+    Aion2Config, CaptureConfig, CaptureInput, CaptureSource, CaptureStatus, DecoderChoice,
+    DecoderProfile, SharedStatus,
 };
-use radar_core::{DataSourceConfig, RadarFrame, RadarSettings, WindowMode};
+use radar_core::{
+    CaptureDecoder, CaptureNorth, DataSourceConfig, RadarFrame, RadarSettings, WindowMode,
+};
 use radar_ingest::source::DataSource;
 use radar_ingest::{DebugReport, Engine, FrameSink};
 use serde::Serialize;
@@ -37,7 +41,7 @@ struct Inner {
 struct AppState {
     inner: Mutex<Inner>,
     store: SettingsStore,
-    recordings: PathBuf,
+    paths: Paths,
 }
 
 impl AppState {
@@ -73,37 +77,54 @@ struct Started {
 /// fatal: capture still runs for the census and recording, and draws nothing.
 fn capture_source(
     cfg: &DataSourceConfig,
-    recordings: &Path,
+    paths: &Paths,
     warnings: &mut Vec<String>,
 ) -> Option<(Box<dyn DataSource>, SharedStatus)> {
     let DataSourceConfig::PacketCapture {
         device,
         file,
+        decoder,
         profile_path,
+        north,
         record,
     } = cfg
     else {
         return None;
     };
-    let profile = profile_path
-        .as_deref()
-        .and_then(|p| match DecoderProfile::load(Path::new(p)) {
-            Ok(profile) => {
-                if !profile.validated {
-                    warnings.push(format!(
-                    "decoder profile \"{}\" is not marked validated: nothing will be drawn from it",
-                    profile.name
-                ));
+    let decoder = match decoder {
+        CaptureDecoder::Aion2 => {
+            let mut config = aion2_config(&paths.config_dir, warnings);
+            config.north = match north {
+                CaptureNorth::NegY => North::NegY,
+                CaptureNorth::PosY => North::PosY,
+            };
+            DecoderChoice::Aion2(Box::new(config))
+        }
+        CaptureDecoder::Profile => match profile_path.as_deref() {
+            None => {
+                warnings.push("no decoder profile chosen; capturing without one".into());
+                DecoderChoice::None
+            }
+            Some(p) => match DecoderProfile::load(Path::new(p)) {
+                Ok(profile) => {
+                    if !profile.validated {
+                        warnings.push(format!(
+                            "decoder profile \"{}\" is not marked validated: nothing will be drawn from it",
+                            profile.name
+                        ));
+                    }
+                    DecoderChoice::Profile(profile)
                 }
-                Some(profile)
-            }
-            Err(e) => {
-                warnings.push(format!(
-                    "decoder profile not loaded ({e}); capturing without one"
-                ));
-                None
-            }
-        });
+                Err(e) => {
+                    warnings.push(format!(
+                        "decoder profile not loaded ({e}); capturing without one"
+                    ));
+                    DecoderChoice::None
+                }
+            },
+        },
+        CaptureDecoder::None => DecoderChoice::None,
+    };
     let input = match file {
         Some(path) => CaptureInput::File { path: path.into() },
         None => CaptureInput::Live {
@@ -112,16 +133,44 @@ fn capture_source(
     };
     let (source, status) = CaptureSource::new(CaptureConfig {
         input,
-        profile,
-        record_dir: record.then(|| recordings.to_path_buf()),
+        decoder,
+        record_dir: record.then(|| paths.recordings.clone()),
     });
     Some((Box::new(source), status))
 }
 
-fn start_engine(app: &AppHandle, settings: &RadarSettings, recordings: &Path) -> Started {
+/// The built-in AION 2 decoder configuration, replaced by
+/// `aion2-decoder.json` in the config folder when present (after a patch).
+fn aion2_config(config_dir: &Path, warnings: &mut Vec<String>) -> Aion2Config {
+    let path = config_dir.join("aion2-decoder.json");
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match Aion2Config::from_json(&text) {
+            Ok(c) => {
+                log::info!("using AION 2 decoder config {}", path.display());
+                c
+            }
+            Err(e) => {
+                warnings.push(format!(
+                    "{} is invalid ({e}); using the built-in one",
+                    path.display()
+                ));
+                Aion2Config::builtin()
+            }
+        },
+        Err(_) => Aion2Config::builtin(),
+    }
+}
+
+/// Where the app keeps its files.
+struct Paths {
+    recordings: PathBuf,
+    config_dir: PathBuf,
+}
+
+fn start_engine(app: &AppHandle, settings: &RadarSettings, paths: &Paths) -> Started {
     let sink = Arc::new(TauriSink(app.clone()));
     let mut warnings = Vec::new();
-    let (result, capture) = match capture_source(&settings.data_source, recordings, &mut warnings) {
+    let (result, capture) = match capture_source(&settings.data_source, paths, &mut warnings) {
         Some((source, status)) => (
             Engine::start_with(settings, Some(source), sink),
             Some(status),
@@ -222,7 +271,7 @@ fn update_settings(
             if let Some(old) = inner.engine.take() {
                 old.stop();
             }
-            let started = start_engine(&app, &settings, &state.recordings);
+            let started = start_engine(&app, &settings, &state.paths);
             inner.engine = started.engine;
             inner.capture = started.capture;
             warnings.extend(started.warnings);
@@ -284,7 +333,7 @@ fn add_capture_marker(
 
 #[tauri::command]
 fn get_recordings_dir(state: State<'_, AppState>) -> String {
-    state.recordings.display().to_string()
+    state.paths.recordings.display().to_string()
 }
 
 fn mark(app: &AppHandle, state: &AppState, kind: &str) -> Result<usize, String> {
@@ -364,8 +413,11 @@ pub fn run() {
                 }
             }
 
-            let recordings = app.path().app_data_dir()?.join("recordings");
-            let started = start_engine(&handle, &loaded.settings, &recordings);
+            let paths = Paths {
+                recordings: app.path().app_data_dir()?.join("recordings"),
+                config_dir: dir.clone(),
+            };
+            let started = start_engine(&handle, &loaded.settings, &paths);
             for w in &started.warnings {
                 log::warn!("{w}");
             }
@@ -378,7 +430,7 @@ pub fn run() {
                     capture: started.capture,
                 }),
                 store,
-                recordings,
+                paths,
             });
             for (shortcut, kind) in marker_shortcuts() {
                 // Another program may own the key; markers still work from the settings window.

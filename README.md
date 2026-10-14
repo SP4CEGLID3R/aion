@@ -18,18 +18,20 @@ Xvfb with no compositor, so the transparent area renders black; on Windows it
 is see-through.*
 
 > [!IMPORTANT]
-> **Cubes from the real game need one more step from you.** The radar can now
-> capture AION 2's traffic passively (Npcap) and finds and frames the game
-> connection. But **which packet announces a cube has not been identified by
-> anyone**, so no cube decoder is built in, and guessing one would show wrong
-> cubes. The app records your sessions and has tools to find the cube packet
-> from them; once you have, a small JSON *decoder profile* switches cubes on.
-> Step by step: [docs/04-packet-capture.md](docs/04-packet-capture.md).
+> **Live hidden cubes from the game: Verteron works, other zones are learned.**
+> With *Packet capture* (Npcap) the radar reads the game's own traffic
+> passively and shows hidden cubes the server reports around you, roughly
+> within **100 m**. The packet layouts come from the
+> [aion2-cube-radar](https://github.com/dennisreichenberg/aion2-cube-radar)
+> findings, re-implemented here and checked against its real captures (all
+> cubes and positions matched). Cube types in other zones are learned the
+> first time you open one with a key. Details, evidence and limits:
+> [docs/05-aion2-protocol.md](docs/05-aion2-protocol.md).
 >
-> Until then it shows the built-in simulator (labelled **SYNTHETIC**), or
-> events from any tool speaking the [documented event protocol](docs/radar-event-protocol.md).
-> Background: [DPS-meter research](docs/01-dps-meter-research.md),
-> [what is missing](docs/03-data-availability.md).
+> Not yet tried against the live game by this project. Verified for the
+> global client build 25800038; a patch can move opcodes (fixable in a JSON
+> file). Your own position only arrives with events such as your buffs, and
+> map north is assumed to be the game's −Y axis (switchable).
 
 ## What it guarantees
 
@@ -84,10 +86,10 @@ through Npcap (receive-only, non-promiscuous), like the Aether DPS meter. It
 game's process or memory, bypasses anti-cheat, or automates input. Recordings
 contain only the game connection.
 
-None of that is a promise about AION 2's terms of service. Using third-party
-tools with the game, and especially one that locates collectibles, may break
-NCSoft's rules and **can get your account banned**. You use it at your own
-risk.
+None of that is a promise about AION 2's terms of service. Another tool's
+author reports that NCSoft support called traffic-reading software a ToS
+violation. Using this, especially to locate collectibles, **can get your
+account banned**. You use it at your own risk.
 
 ## Quick start (development)
 
@@ -173,26 +175,27 @@ file is kept as `settings.json.bak` and replaced with defaults.
 
 ## Packet capture in short
 
-1. Install [Npcap](https://npcap.com).
-2. Settings → Data source → **Packet capture**, *All adapters*, **Record** on.
-   The panel should find the *Game connection* within seconds of logging in.
-3. Play, pressing **Ctrl+Alt+V** when a cube appears and **Ctrl+Alt+C** when
-   you collect one.
-4. `radar-capture analyze <recording>.pcap` ranks the packet types that line
-   up with your markers; `radar-capture inspect … --opcode "XX YY"` finds
-   coordinate and id fields.
-5. Write a decoder profile, check it with `radar-capture decode`, set
-   `"validated": true`, and choose it in Settings. Cubes appear on the radar.
+1. Install [Npcap](https://npcap.com) (default options).
+2. Settings → Data source → **Packet capture**, *All adapters*, decoder
+   **AION 2 hidden cubes (built-in)** → Apply.
+3. Log in. The capture panel should show a *Game connection*, your zone and,
+   after a buff on yourself, your character.
+4. Hidden cubes within about 100 m appear on the radar. They disappear when
+   someone opens them and turn stale when you walk out of range.
+5. If the radar looks mirrored compared with the minimap, switch *Map north*
+   to +Y.
 
-Practice on invented data first: `radar-capture synth demo.pcap` writes a
-demo capture, markers and profile.
-[docs/04-packet-capture.md](docs/04-packet-capture.md) has the details.
+For zones or patches the built-in decoder doesn't know yet, the discovery
+tools are still there: recording, marker hotkeys (**Ctrl+Alt+V** cube
+appeared, **Ctrl+Alt+C** collected) and `radar-capture analyze` / `inspect`.
+See [docs/04-packet-capture.md](docs/04-packet-capture.md).
 
-<img src="docs/images/radar-capture-demo.png" width="280" alt="The radar fed by live packet capture of the synthetic demo stream over a real loopback TCP connection, decoded with the demo profile: one live cube beyond range shown as a rim arrow">
+<img src="docs/images/radar-aion2-demo.png" width="280" alt="The radar fed by live packet capture over a real TCP connection and the built-in AION 2 decoder: a hidden cube about 56 m to the north-west of the player">
 
 *The full chain on a real TCP connection: libpcap capture → game stream
-detection → framing → demo profile → radar. The stream is the invented demo
-session, not AION 2.*
+detection → framing → built-in AION 2 decoder → radar. The traffic is made
+up but uses exactly the documented AION 2 packet layouts; it is not a
+capture of the game.*
 
 ## Connecting another data source
 
@@ -226,7 +229,7 @@ docs/                   research, architecture, protocol, data availability
 | 1. Inspect the DPS meter's architecture and license | Done: [docs/01-dps-meter-research.md](docs/01-dps-meter-research.md) |
 | 2. Working radar with synthetic cubes | Done |
 | 3. Coordinate transformations and unit tests | Done |
-| 4. Validated telemetry adapter | Protocol and adapter done. Passive packet capture, framing and discovery tools done; **the cube packet itself still has to be found from recordings** ([guide](docs/04-packet-capture.md)) |
+| 4. Validated telemetry adapter | Done: passive capture with a built-in AION 2 cube decoder, checked against real captures from aion2-cube-radar ([evidence](docs/05-aion2-protocol.md)); not yet tried live in the game by this project |
 | 5. Verify game versions, document missing data | Done: [docs/03-data-availability.md](docs/03-data-availability.md) |
 | 6. Windows installer and build instructions | Config, CI job and instructions done. Not built on Windows in this environment |
 | 7. Live cube tracking, spawned cubes only | Done, with acceptance tests |

@@ -6,6 +6,7 @@ use radar_capture::discovery::{correlate, correlate_by, Grouping};
 use radar_capture::profile::DecoderProfile;
 use radar_capture::source::process_records;
 use radar_capture::synthetic;
+use radar_capture::DecoderChoice;
 use radar_core::{CoordinateTransform, StaleDisplay, Tracker, TrackerConfig};
 use radar_ingest::EventAdapter;
 
@@ -14,7 +15,7 @@ const T0: f64 = 1_760_000_000_000.0;
 #[test]
 fn markers_point_at_the_cube_packet() {
     let s = synthetic::session(T0, 120);
-    let off = process_records(&s.records, None, true).unwrap();
+    let off = process_records(&s.records, DecoderChoice::None, true).unwrap();
     assert_eq!(off.streams.game_streams, 1);
     assert_eq!(off.streams.framing.bad_bundles, 0);
 
@@ -38,7 +39,7 @@ fn markers_point_at_the_cube_packet() {
 fn a_validated_profile_puts_exactly_the_live_cubes_on_the_radar() {
     let s = synthetic::session(T0, 120);
     let profile: DecoderProfile = serde_json::from_str(synthetic::PROFILE_JSON).unwrap();
-    let off = process_records(&s.records, Some(profile), false).unwrap();
+    let off = process_records(&s.records, DecoderChoice::Profile(profile), false).unwrap();
     assert_eq!(off.decode_errors, 0);
 
     let adapter = EventAdapter::new(CoordinateTransform::default()).unwrap();

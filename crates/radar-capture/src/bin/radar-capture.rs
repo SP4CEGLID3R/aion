@@ -6,7 +6,7 @@
 //! radar-capture census  FILE.pcap
 //! radar-capture analyze FILE.pcap [--markers FILE] [--kind cube_visible] [--before MS] [--after MS] [--top N]
 //! radar-capture inspect FILE.pcap --opcode "XX YY" [--subtype XX] [--markers FILE] [--dump N]
-//! radar-capture decode  FILE.pcap --profile PROFILE.json [--out EVENTS.jsonl]
+//! radar-capture decode  FILE.pcap [--profile PROFILE.json | --config AION2.json] [--out EVENTS.jsonl]
 //! radar-capture synth   OUT.pcap      (a made-up demo session + markers + profile)
 //! ```
 //!
@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use radar_capture::aion2::Aion2Config;
 use radar_capture::discovery::{
     self, correlate_by, correlation_table, hexdump, inspect, read_markers, Grouping, Marker,
 };
@@ -27,11 +28,11 @@ use radar_capture::live::PcapApi;
 use radar_capture::pcapfile::{self, PcapWriter};
 use radar_capture::profile::{parse_hex, DecoderProfile};
 use radar_capture::source::{
-    add_marker, process_records, CaptureConfig, CaptureInput, CaptureSource,
+    add_marker, process_records, CaptureConfig, CaptureInput, CaptureSource, DecoderChoice,
 };
 use radar_capture::synthetic;
 use radar_ingest::source::DataSource;
-use radar_ingest::SourceMessage;
+use radar_ingest::{SourceMessage, WireEvent};
 
 struct Args {
     positional: Vec<String>,
@@ -73,7 +74,8 @@ impl Args {
 const USAGE: &str = "usage: radar-capture <devices|record|census|analyze|inspect|decode|synth> ...
   devices                              list capture adapters
   record [--device NAME] [--out DIR] [--seconds N]
-                                       record the game connection to DIR (default ./recordings);
+                                       record the game connection to DIR (default ./recordings),
+                                       printing hidden cubes as the built-in decoder finds them;
                                        type v + Enter when a cube appears, c + Enter when you
                                        collect one, q + Enter to stop
   census FILE                          packet types in a .pcap/.pcapng
@@ -81,8 +83,9 @@ const USAGE: &str = "usage: radar-capture <devices|record|census|analyze|inspect
                                        rank packet types by how they line up with markers
   inspect FILE --opcode \"XX YY\" [--subtype XX] [--markers M] [--dump N]
                                        look for coordinate and id fields in one packet type
-  decode FILE --profile P [--out OUT.jsonl]
-                                       decode with a profile; OUT can be replayed in the radar
+  decode FILE [--profile P | --config C] [--out OUT.jsonl]
+                                       decode with the built-in AION 2 decoder (or a profile);
+                                       OUT can be replayed in the radar
   synth OUT.pcap                       write a made-up demo session to practise on";
 
 fn main() -> ExitCode {
@@ -130,7 +133,7 @@ fn record(a: &Args) -> Result<(), String> {
         input: CaptureInput::Live {
             device: a.flag("device").map(str::to_owned),
         },
-        profile: None,
+        decoder: DecoderChoice::Aion2(Box::new(aion2_config(a)?)),
         record_dir: Some(dir),
     });
     let stop = Arc::new(AtomicBool::new(false));
@@ -138,8 +141,16 @@ fn record(a: &Args) -> Result<(), String> {
     let worker = std::thread::spawn(move || {
         src.run(
             &mut |m| {
-                if let SourceMessage::Status(state, detail) = m {
-                    eprintln!("[{state:?}] {detail}");
+                match m {
+                    SourceMessage::Status(state, detail) => eprintln!("[{state:?}] {detail}"),
+                    SourceMessage::Event(
+                        e @ (WireEvent::CubeSpawned { .. }
+                        | WireEvent::CubeCollected { .. }
+                        | WireEvent::CubeLost { .. }
+                        | WireEvent::CubeDespawned { .. }
+                        | WireEvent::ZoneChanged { .. }),
+                    ) => eprintln!("{}", e.to_line()),
+                    SourceMessage::Event(_) => {}
                 }
                 true
             },
@@ -218,7 +229,7 @@ fn default_markers(a: &Args) -> Result<Option<PathBuf>, String> {
 }
 
 fn census(a: &Args) -> Result<(), String> {
-    let off = process_records(&load(a)?, None, false)?;
+    let off = process_records(&load(a)?, DecoderChoice::None, false)?;
     let st = &off.streams;
     println!(
         "game streams: {}   frames: {}   bundles: {} ({} bad)   resyncs: {}   dropped bytes: {}",
@@ -248,7 +259,7 @@ fn analyze(a: &Args) -> Result<(), String> {
     if markers.is_empty() {
         return Err(format!("no {kind:?} markers in {}", path.display()));
     }
-    let off = process_records(&load(a)?, None, true)?;
+    let off = process_records(&load(a)?, DecoderChoice::None, true)?;
     let (before, after, top) = (
         a.num("before", 3000.0)?,
         a.num("after", 1000.0)?,
@@ -282,7 +293,7 @@ fn inspect_cmd(a: &Args) -> Result<(), String> {
         .and_then(parse_hex)
         .filter(|b| b.len() == 2)
         .ok_or("--opcode must be two hex bytes, e.g. \"41 36\"")?;
-    let off = process_records(&load(a)?, None, true)?;
+    let off = process_records(&load(a)?, DecoderChoice::None, true)?;
     let subtype = match a.flag("subtype") {
         Some(h) => Some(
             parse_hex(h)
@@ -324,11 +335,32 @@ fn inspect_cmd(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// The built-in AION 2 decoder configuration, or `--config FILE`.
+fn aion2_config(a: &Args) -> Result<Aion2Config, String> {
+    match a.flag("config") {
+        Some(p) => {
+            Aion2Config::from_json(&std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?)
+        }
+        None => Ok(Aion2Config::builtin()),
+    }
+}
+
 fn decode(a: &Args) -> Result<(), String> {
-    let profile_path = a.flag("profile").ok_or("--profile is required")?;
-    let profile = DecoderProfile::load(Path::new(profile_path)).map_err(|e| e.to_string())?;
-    let validated = profile.validated;
-    let off = process_records(&load(a)?, Some(profile), false)?;
+    let (choice, validated) = match a.flag("profile") {
+        Some(path) => {
+            let profile = DecoderProfile::load(Path::new(path)).map_err(|e| e.to_string())?;
+            let v = profile.validated;
+            (DecoderChoice::Profile(profile), v)
+        }
+        None => (DecoderChoice::Aion2(Box::new(aion2_config(a)?)), true),
+    };
+    let off = process_records(&load(a)?, choice, false)?;
+    if let Some(st) = &off.aion2 {
+        eprintln!(
+            "AION 2 decoder: own character {:?}, zone {:?}, {} cube spawns, learned templates {:?}",
+            st.self_id, st.zone, st.cubes_seen_total, st.learned_templates
+        );
+    }
     let mut out: Box<dyn Write> = match a.flag("out") {
         Some(p) => Box::new(std::fs::File::create(p).map_err(|e| e.to_string())?),
         None => Box::new(std::io::stdout()),

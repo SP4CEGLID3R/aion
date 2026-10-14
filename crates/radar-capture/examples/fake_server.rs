@@ -1,9 +1,11 @@
-//! Serves the SYNTHETIC demo stream (invented opcodes, not AION 2) over a
-//! real loopback TCP connection, in real time, so live capture can be tested
-//! without the game:
+//! Serves a SYNTHETIC stream over a real loopback TCP connection, in real
+//! time, so live capture can be tested without the game:
 //!
-//!     cargo run -p radar-capture --example fake_server -- 7777 30
+//!     cargo run -p radar-capture --example fake_server -- 7777 30          # invented opcodes
+//!     cargo run -p radar-capture --example fake_server -- 7777 30 aion2    # documented AION 2 layouts
 //!     nc 127.0.0.1 7777 > /dev/null      # any client
+//!
+//! Either way the data is made up.
 
 use std::io::Write;
 use std::net::TcpListener;
@@ -16,13 +18,18 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let port: u16 = args.next().and_then(|a| a.parse().ok()).unwrap_or(7777);
     let seconds: u32 = args.next().and_then(|a| a.parse().ok()).unwrap_or(30);
-    let session = synthetic::session(0.0, seconds);
+    let aion2 = args.next().as_deref() == Some("aion2");
+    let records = if aion2 {
+        synthetic::aion2_layout::session(0.0, seconds)
+    } else {
+        synthetic::session(0.0, seconds).records
+    };
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind");
     eprintln!("synthetic server on 127.0.0.1:{port}, waiting for a client");
     let (mut sock, peer) = listener.accept().expect("accept");
     eprintln!("client {peer}; streaming {seconds} s");
     let start = Instant::now();
-    for r in &session.records {
+    for r in &records {
         let Some(seg) = parse_ip(&r.data) else {
             continue;
         };

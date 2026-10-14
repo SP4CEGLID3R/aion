@@ -189,3 +189,143 @@ pub fn session(t0: f64, seconds: u32) -> Session {
         cubes,
     }
 }
+
+/// A made-up session in the **documented AION 2 layouts** (see `aion2.rs`),
+/// for demos and tests of the built-in decoder. Positions, ids and timing are
+/// invented; no captured game data is used.
+pub mod aion2_layout {
+    use std::net::SocketAddr;
+
+    use crate::framing::{encode_bundle, encode_frame};
+    use crate::net::{build_ipv4_tcp, linktype, tcp_flags};
+    use crate::pcapfile::Record;
+
+    pub const SELF_ID: u64 = 9_180;
+    pub const CUBE_TEMPLATE: u32 = 1_200_039;
+
+    fn varint(mut v: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let b = (v & 0x7F) as u8;
+            v >>= 7;
+            if v == 0 {
+                out.push(b);
+                return out;
+            }
+            out.push(b | 0x80);
+        }
+    }
+
+    fn xyz(p: [f32; 3]) -> Vec<u8> {
+        p.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    pub fn heartbeat(t: f64) -> Vec<u8> {
+        encode_frame([0x00, 0x36], &(t as u64).to_le_bytes())
+    }
+
+    pub fn spawn(id: u64, template: u32, p: [f32; 3]) -> Vec<u8> {
+        let mut b = varint(id);
+        b.extend([0x04, 0x00]);
+        b.extend(template.to_le_bytes());
+        b.extend(xyz(p));
+        b.extend([0u8; 8]);
+        b.extend([1, 1, 1]);
+        b.extend(1_791_884_700_000i64.to_le_bytes());
+        encode_frame([0x34, 0x36], &b)
+    }
+
+    pub fn removed(id: u64, reason: u8) -> Vec<u8> {
+        let mut b = varint(id);
+        b.extend([reason, 0x03, 0x00]);
+        encode_frame([0x35, 0x36], &b)
+    }
+
+    pub fn self_buff(p: [f32; 3]) -> Vec<u8> {
+        let mut b = varint(SELF_ID);
+        b.extend([0x01, 0x11, 0x90, 0x03, 0xe8, 0x03, 0, 0, 0, 0, 0, 0, 0, 0]);
+        b.extend(1_791_884_800_000i64.to_le_bytes());
+        b.extend(varint(SELF_ID));
+        b.extend([0x01, 0x00]);
+        b.extend(xyz(p));
+        encode_frame([0x2a, 0x38], &b)
+    }
+
+    /// Player position (game units, cm) at `rel` ms: a slow walk.
+    pub fn player(rel: f64) -> [f32; 3] {
+        let s = rel / 1000.0;
+        [
+            -45_000.0 + (s * 0.05).sin() as f32 * 3_000.0,
+            120_000.0 + (s * 0.04).cos() as f32 * 3_000.0,
+            15_000.0,
+        ]
+    }
+
+    /// `seconds` of a server→client game stream starting at `t0` (ms): a
+    /// heartbeat every 50 ms, a self-buff every 3 s, a cube appearing about
+    /// 60 m away every 20 s; each is opened after 12 s (or, every third one,
+    /// leaves the send range), plus objects that are not cubes.
+    pub fn session(t0: f64, seconds: u32) -> Vec<Record> {
+        let server: SocketAddr = "198.51.100.30:13328".parse().unwrap();
+        let client: SocketAddr = "192.168.0.10:50123".parse().unwrap();
+        let mut seq: u32 = 1_000;
+        let mut records = vec![Record {
+            t_ms: t0,
+            linktype: linktype::RAW,
+            data: build_ipv4_tcp(server, client, seq - 1, tcp_flags::SYN, &[]),
+        }];
+        let mut live: Vec<(u64, f64, bool)> = Vec::new();
+        let mut next_id = 65_000u64;
+        let mut tick: u64 = 0;
+        while (tick as f64) * 50.0 < seconds as f64 * 1000.0 {
+            let rel = tick as f64 * 50.0;
+            let t = t0 + rel;
+            let mut batch = heartbeat(t);
+            if tick.is_multiple_of(60) {
+                batch.extend(self_buff(player(rel)));
+            }
+            if tick % 400 == 40 {
+                let p = player(rel);
+                let a = tick as f32 * 0.37;
+                let pos = [
+                    p[0] + 6_000.0 * a.cos(),
+                    p[1] + 6_000.0 * a.sin(),
+                    p[2] + 300.0,
+                ];
+                let id = next_id;
+                next_id += 1;
+                let frame = spawn(id, CUBE_TEMPLATE, pos);
+                // Some arrive inside compressed bundles, like real traffic.
+                batch.extend(if id.is_multiple_of(2) {
+                    encode_bundle(&frame)
+                } else {
+                    frame
+                });
+                batch.extend(spawn(
+                    next_id + 10_000,
+                    1_500_041,
+                    [pos[0] + 900.0, pos[1], pos[2]],
+                ));
+                live.push((id, rel, id.is_multiple_of(3)));
+            }
+            live.retain(|(id, born, leaves)| {
+                if rel - born >= 12_000.0 {
+                    batch.extend(removed(*id, if *leaves { 0x01 } else { 0x04 }));
+                    false
+                } else {
+                    true
+                }
+            });
+            for chunk in batch.chunks(1400) {
+                records.push(Record {
+                    t_ms: t,
+                    linktype: linktype::RAW,
+                    data: build_ipv4_tcp(server, client, seq, 0, chunk),
+                });
+                seq = seq.wrapping_add(chunk.len() as u32);
+            }
+            tick += 1;
+        }
+        records
+    }
+}

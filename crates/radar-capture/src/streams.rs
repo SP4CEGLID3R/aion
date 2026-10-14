@@ -37,6 +37,11 @@ pub enum StreamEvent {
         t_ms: f64,
         frame: Frame,
     },
+    /// Bytes of a game stream were lost: whatever they said is unknown.
+    Gap {
+        conn: u64,
+        t_ms: f64,
+    },
 }
 
 /// What is known about a flow, for deciding what to record.
@@ -188,9 +193,10 @@ impl GameStreams {
                             .map(|frame| StreamEvent::Frame { conn, t_ms, frame }),
                     );
                 }
-                (State::Game { framer, .. }, Chunk::Gap(_)) => {
+                (State::Game { conn, framer }, Chunk::Gap(_)) => {
                     self.stats.gaps += 1;
                     framer.desync();
+                    out.push(StreamEvent::Gap { conn: *conn, t_ms });
                 }
                 (
                     State::Probing {

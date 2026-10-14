@@ -101,6 +101,15 @@ impl EventAdapter {
                 zone,
                 Provenance::Live,
             )?,
+            WireEvent::CubeLost { t, id, zone } => self.cube(
+                CubeEventKind::Lost,
+                t,
+                id,
+                None,
+                None,
+                zone,
+                Provenance::Live,
+            )?,
             WireEvent::ZoneChanged { t, zone } => {
                 if zone.trim().is_empty() {
                     return Err(AdaptError::EmptyZone);

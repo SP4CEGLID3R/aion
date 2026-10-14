@@ -70,7 +70,15 @@ export type DataSourceConfig =
   | { kind: "synthetic"; seed: number; cubeCount: number }
   | { kind: "replay"; path: string; speed: number; loop: boolean }
   | { kind: "local_tcp"; port: number }
-  | { kind: "packet_capture"; device: string | null; file: string | null; profilePath: string | null; record: boolean }
+  | {
+      kind: "packet_capture";
+      device: string | null;
+      file: string | null;
+      decoder: "aion2" | "profile" | "none";
+      profilePath: string | null;
+      north: "neg_y" | "pos_y";
+      record: boolean;
+    }
   | { kind: "none" };
 
 export interface CaptureDevice {
@@ -91,6 +99,20 @@ export interface OpcodeRow {
   decoded: boolean;
 }
 
+export interface Aion2Status {
+  clientBuild: string;
+  selfId: number | null;
+  selfFixAgeMs: number | null;
+  mapId: number | null;
+  zone: string | null;
+  cubesLive: number;
+  cubesSeenTotal: number;
+  objectsTracked: number;
+  lastObjectSpawnMs: number | null;
+  learnedTemplates: number[];
+  warnings: string[];
+}
+
 export interface CaptureStatus {
   running: boolean;
   library: string | null;
@@ -106,8 +128,9 @@ export interface CaptureStatus {
   };
   census: OpcodeRow[];
   frames: number;
-  profile: string | null;
-  profileValidated: boolean;
+  decoder: string | null;
+  decoderActive: boolean;
+  aion2: Aion2Status | null;
   decoded: number;
   decodeErrors: number;
   recording: string | null;

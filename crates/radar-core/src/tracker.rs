@@ -270,6 +270,24 @@ impl Tracker {
             CubeEventKind::Seen => self.on_seen(id, ev, now),
             CubeEventKind::Despawned => self.on_gone(id, ev, CubeState::Despawned, now),
             CubeEventKind::Collected => self.on_gone(id, ev, CubeState::Collected, now),
+            CubeEventKind::Lost => self.on_lost(id, ev, now),
+        }
+    }
+
+    fn on_lost(&mut self, id: &str, ev: &CubeEvent, now: Millis) -> Outcome {
+        match self.cubes.get_mut(id) {
+            Some(rec) if rec.state == CubeState::Spawned => {
+                rec.state = CubeState::Stale;
+                rec.last_event_at = ev.observed_at;
+                rec.state_since = now;
+                Outcome::Applied
+            }
+            Some(rec) => {
+                rec.last_event_at = ev.observed_at;
+                Outcome::Duplicate
+            }
+            // Losing sight of something never seen changes nothing.
+            None => Outcome::Duplicate,
         }
     }
 

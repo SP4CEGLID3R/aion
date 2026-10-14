@@ -99,10 +99,23 @@
           <div data-source="packet_capture">
             <p class="hint">
               Passive and receive-only: copies this PC's game traffic, never touches the game or changes packets.
-              Needs <a href="https://npcap.com" target="_blank" rel="noreferrer">Npcap</a> on Windows.
-              Cubes are drawn only with a <strong>validated</strong> decoder profile; until then this records and
-              counts packet types so the cube packet can be found.
+              Needs <a href="https://npcap.com" target="_blank" rel="noreferrer">Npcap</a> on Windows. The built-in
+              decoder recognises hidden cubes in Verteron (verified) and learns other zones' cubes when you open one
+              with a key. The game only sends cubes within about 100 m of you.
             </p>
+            <label>Decoder
+              <select name="dataSource.decoder">
+                <option value="aion2">AION 2 hidden cubes (built-in)</option>
+                <option value="profile">My own decoder profile</option>
+                <option value="none">None — record and count packets only</option>
+              </select>
+            </label>
+            <label>Map north is the game's
+              <select name="dataSource.north">
+                <option value="neg_y">−Y axis (default; switch if the radar is mirrored vs. the minimap)</option>
+                <option value="pos_y">+Y axis</option>
+              </select>
+            </label>
             <label>Adapter
               <select name="dataSource.device"><option value="">All adapters (find the game automatically)</option></select>
             </label>

@@ -100,6 +100,15 @@ pub enum WireEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         zone: Option<String>,
     },
+    /// The source can no longer confirm the cube (e.g. out of the server's
+    /// send range). The radar marks it stale, never live.
+    CubeLost {
+        t: Millis,
+        #[serde(default)]
+        id: Option<WireId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zone: Option<String>,
+    },
     ZoneChanged {
         t: Millis,
         zone: String,
@@ -139,6 +148,7 @@ impl WireEvent {
             | Self::CubeSeen { t, .. }
             | Self::CubeDespawned { t, .. }
             | Self::CubeCollected { t, .. }
+            | Self::CubeLost { t, .. }
             | Self::ZoneChanged { t, .. }
             | Self::HistoricalLocation { t, .. } => Some(*t),
             Self::SpawnPoint { t, .. } => *t,
@@ -154,6 +164,7 @@ impl WireEvent {
             | Self::CubeSeen { t, .. }
             | Self::CubeDespawned { t, .. }
             | Self::CubeCollected { t, .. }
+            | Self::CubeLost { t, .. }
             | Self::ZoneChanged { t, .. }
             | Self::HistoricalLocation { t, .. } => *t += delta,
             Self::SpawnPoint { t, .. } => {

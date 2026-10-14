@@ -440,3 +440,29 @@ fn frame_serialises_with_camel_case_and_screaming_states() {
     assert!(json.contains("\"state\":\"SPAWNED\""));
     assert!(json.contains("\"confirmedAgeMs\""));
 }
+
+#[test]
+fn a_lost_cube_is_stale_at_once_never_live_and_a_new_spawn_revives_it() {
+    let mut t = tracker();
+    t.apply(spawn("a", T0), T0);
+    let lost = RadarEvent::Cube(CubeEvent {
+        pos: None,
+        ..cube(CubeEventKind::Lost, "a", T0 + 100)
+    });
+    assert_eq!(t.apply(lost, T0 + 100), Outcome::Applied);
+    assert!(markers(&t, T0 + 100).is_empty());
+    let shown = t.frame(T0 + 100, StaleDisplay::MarkStale);
+    assert_eq!(shown.cubes[0].state, CubeState::Stale);
+
+    // Back in range: the source reports the spawn again.
+    assert_eq!(t.apply(spawn("a", T0 + 200), T0 + 200), Outcome::Applied);
+    assert_eq!(markers(&t, T0 + 200), vec!["a"]);
+
+    // Losing an unknown cube changes nothing.
+    let unknown = RadarEvent::Cube(CubeEvent {
+        pos: None,
+        ..cube(CubeEventKind::Lost, "zz", T0 + 300)
+    });
+    assert_eq!(t.apply(unknown, T0 + 300), Outcome::Duplicate);
+    assert!(t.cube("zz").is_none());
+}
