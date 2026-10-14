@@ -4,9 +4,9 @@
 
 | Question | Answer |
 |---|---|
-| Does the radar read AION 2 data today? | **No.** No validated source of cube spawn/despawn events or coordinates exists that this project can use |
+| Does the radar read AION 2 data today? | **It captures and frames it**, but the cube and player-position packets are not identified, so nothing is drawn from the game until you find them with the discovery tools and write a validated decoder profile ([guide](./04-packet-capture.md)) |
 | Which AION 2 client versions are supported? | **None are verified.** The radar is game-agnostic: it shows whatever a validated source sends in the [Radar Event Protocol](./radar-event-protocol.md) |
-| What does it run on today? | The built-in synthetic simulator, replay files (`.jsonl`, synthetic `.srf`), and a loopback telemetry socket for an authorized producer |
+| What does it run on today? | Passive packet capture with a decoder profile, the built-in synthetic simulator, replay files (`.jsonl`, `.srf`, `.pcap`, `.pcapng`), and a loopback telemetry socket |
 | Can the Aether DPS meter supply the data? | **No.** It parses combat, names, summons and HP only, with no positions and no cubes, and it has no external API ([research](./01-dps-meter-research.md)) |
 
 ## Data the radar needs, and what is known about each
@@ -18,19 +18,21 @@
 | Cube spawn event with a stable id and position | Adds a marker | None | Aether's `41 36` "entity spawn" yields id + mob code; its documented layout has unparsed gaps and **no** documented position | Unverified. Not assumed |
 | Cube despawn / collection event | Removes a marker | None | Aether reads HP and deaths for combat targets only | — |
 | Periodic presence confirmation | Keeps a marker from going stale | None | — | — |
-| Zone/instance change | Invalidates ids | Pattern known, not used | Aether: a new game connection = zone change; entity ids are per connection | Documented by Aether for combat entities only |
+| Zone/instance change | Invalidates ids | Used by packet capture: a new game connection resets the radar | Aether: a new game connection = zone change; entity ids are per connection | Documented by Aether for combat entities |
 | Coordinate frame (axes, units, origin) | Correct projection | None | — | — |
 
 ## What is deliberately not done
 
-* **No AION 2 packet structure is implemented, guessed, or documented here.**
-  Nothing verified shows that any packet carries cube coordinates, and the
-  requirement is to not fabricate one.
+* **No cube or position packet layout is built in or guessed.** Only the
+  stream framing is implemented, as Aether documents it (verified there
+  against global recordings, not yet by this project). Nothing verified shows
+  which packet carries cube coordinates, so that comes from a decoder profile
+  you derive from your own recordings.
 * **No static map data is shown.** Aether's old map used a survey of
   "hidden cube" locations from AION2 Hub. Those are possible spawn locations,
   not live cubes, and showing them would break requirement 7.
-* **No traffic capture, memory reading, injection, or traffic modification.**
-  The radar only reads what a source hands it over loopback or from a file.
+* **No memory reading, injection, or traffic modification.** Packet capture
+  is passive (Npcap, receive-only) and records only the game connection.
 
 ## What it would take to support a real source
 

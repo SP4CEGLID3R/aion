@@ -183,3 +183,16 @@ body.separate #toolbar {
 body.separate #resize-grip {
   display: none;
 }
+
+#toast {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: rgba(124, 58, 237, 0.9);
+  color: white;
+  font-weight: 700;
+  pointer-events: none;
+}

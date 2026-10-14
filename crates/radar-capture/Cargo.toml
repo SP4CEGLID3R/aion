@@ -1,0 +1,16 @@
+[package]
+name = "radar-capture"
+description = "Passive packet capture, AION 2 stream framing, discovery tools and profile-driven decoding for the radar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+radar-core = { path = "../radar-core" }
+radar-ingest = { path = "../radar-ingest" }
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+thiserror.workspace = true
+libloading = "0.8"
+lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-decode", "safe-encode"] }

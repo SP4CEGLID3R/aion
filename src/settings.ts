@@ -2,7 +2,7 @@
 // diagnostics panel polled from the backend.
 
 import { backend } from "./lib/bridge";
-import type { DataSourceConfig, DebugReport, RadarSettings, SourceAxis } from "./lib/types";
+import type { CaptureStatus, DataSourceConfig, DebugReport, RadarSettings, SourceAxis } from "./lib/types";
 
 const form = document.querySelector<HTMLFormElement>("#form")!;
 const warningsEl = document.querySelector<HTMLElement>("#warnings")!;
@@ -88,6 +88,19 @@ function readSource(): DataSourceConfig {
       return { kind, path: val("path").value, speed: Number(val("speed").value || 1), loop: val("loop").checked };
     case "local_tcp":
       return { kind, port: Number(val("port").value || 47810) };
+    case "packet_capture": {
+      const text = (name: string) => {
+        const v = form.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="dataSource.${name}"]`)!.value.trim();
+        return v === "" ? null : v;
+      };
+      return {
+        kind,
+        device: text("device"),
+        file: text("file"),
+        profilePath: text("profilePath"),
+        record: val("record").checked,
+      };
+    }
     default:
       return { kind: "none" };
   }
@@ -172,11 +185,73 @@ function renderDebug(r: DebugReport | null): void {
   );
 }
 
+function renderCapture(c: CaptureStatus | null): void {
+  const section = document.querySelector<HTMLElement>("#capture")!;
+  section.hidden = c === null;
+  if (!c) return;
+  const notes = document.querySelector<HTMLElement>("#capture-notes")!;
+  const lines = [...c.notes, ...(c.error ? [`Error: ${c.error}`] : [])];
+  notes.hidden = lines.length === 0;
+  notes.textContent = lines.join(" ");
+
+  const s = c.streams;
+  const items: [string, string][] = [
+    ["Capture", c.running ? "running" : "stopped"],
+    ["Library", c.library ?? "—"],
+    ["Adapters", c.devices.join("; ") || "—"],
+    ["Packets", String(c.packets)],
+    ["Game connection", s.currentStream ?? "not found yet"],
+    ["Game frames", String(c.frames)],
+    ["Bundles (bad)", `${s.framing.bundles} (${s.framing.badBundles})`],
+    ["Resyncs / gaps", `${s.framing.resyncs} / ${s.gaps}`],
+    ["Decoder profile", c.profile ? `${c.profile}${c.profileValidated ? " (validated)" : " (NOT validated)"}` : "none"],
+    ["Decoded / unreadable", `${c.decoded} / ${c.decodeErrors}`],
+    ["Recording", c.recording ? `${c.recording} (${Math.round(c.recordingBytes / 1024)} KB)` : "off"],
+    ["Markers", c.markersFile ? `${c.markers} in ${c.markersFile}` : "—"],
+  ];
+  document.querySelector<HTMLElement>("#capture-summary")!.replaceChildren(
+    ...items.map(([k, v]) => {
+      const div = document.createElement("div");
+      const span = document.createElement("span");
+      span.textContent = `${k}: `;
+      div.append(span, v);
+      return div;
+    }),
+  );
+  document.querySelector<HTMLTableSectionElement>("#capture-census tbody")!.replaceChildren(
+    ...c.census.map((r) => {
+      const tr = document.createElement("tr");
+      tr.append(
+        cell(r.opcode),
+        cell(String(r.count)),
+        cell(r.minLen === r.maxLen ? String(r.minLen) : `${r.minLen}–${r.maxLen}`),
+        cell(String(r.bundled)),
+        cell(r.decoded ? "yes" : ""),
+      );
+      return tr;
+    }),
+  );
+}
+
+async function fillDevices(): Promise<void> {
+  const select = form.querySelector<HTMLSelectElement>('[name="dataSource.device"]')!;
+  try {
+    const devices = await backend.listCaptureDevices();
+    for (const d of devices) {
+      const label = `${d.description ?? d.name}${d.ipv4.length ? ` (${d.ipv4.join(", ")})` : ""}`;
+      select.append(new Option(label, d.name));
+    }
+  } catch (e) {
+    select.append(new Option(`Capture library unavailable: ${String(e)}`, "", false, false));
+  }
+}
+
 async function main(): Promise<void> {
   document.querySelector<HTMLElement>("#preview-note")!.hidden = !backend.isPreview;
   for (const sel of form.querySelectorAll<HTMLSelectElement>("select[data-axis]")) {
     sel.append(...AXES.map((a) => new Option(AXIS_LABEL[a], a)));
   }
+  await fillDevices();
   fill(await backend.getSettings());
   await backend.onSettings(fill);
 
@@ -199,9 +274,23 @@ async function main(): Promise<void> {
     showWarnings(res.warnings);
   });
 
+  for (const [id, kind] of [
+    ["#mark-visible", "cube_visible"],
+    ["#mark-collected", "cube_collected"],
+  ] as const) {
+    document.querySelector(id)!.addEventListener("click", async () => {
+      try {
+        await backend.addCaptureMarker(kind);
+      } catch (err) {
+        showWarnings([String(err)]);
+      }
+    });
+  }
+
   const poll = async () => {
     try {
       renderDebug(await backend.getDebugReport());
+      renderCapture(await backend.getCaptureStatus());
     } catch (err) {
       console.error(err);
     }

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/radar-core", "crates/radar-ingest", "src-tauri"]
-default-members = ["crates/radar-core", "crates/radar-ingest"]
+members = ["crates/radar-core", "crates/radar-ingest", "crates/radar-capture", "src-tauri"]
+default-members = ["crates/radar-core", "crates/radar-ingest", "crates/radar-capture"]
 
 [workspace.package]
 version = "0.1.0"

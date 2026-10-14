@@ -5,7 +5,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { startPreviewFrames } from "./preview";
-import { DEFAULT_SETTINGS, type DebugReport, type RadarFrame, type RadarSettings, type SettingsUpdate } from "./types";
+import {
+  DEFAULT_SETTINGS,
+  type CaptureDevice,
+  type CaptureStatus,
+  type DebugReport,
+  type RadarFrame,
+  type RadarSettings,
+  type SettingsUpdate,
+} from "./types";
 
 export interface Backend {
   readonly isPreview: boolean;
@@ -16,10 +24,16 @@ export interface Backend {
   openSettingsWindow(): Promise<void>;
   onFrame(cb: (frame: RadarFrame) => void): Promise<UnlistenFn>;
   onSettings(cb: (settings: RadarSettings) => void): Promise<UnlistenFn>;
+  listCaptureDevices(): Promise<CaptureDevice[]>;
+  getCaptureStatus(): Promise<CaptureStatus | null>;
+  addCaptureMarker(kind: string): Promise<number>;
+  getRecordingsDir(): Promise<string>;
+  onMarker(cb: (message: string) => void): Promise<UnlistenFn>;
 }
 
 export const FRAME_EVENT = "radar-frame";
 export const SETTINGS_EVENT = "settings-changed";
+export const MARKER_EVENT = "capture-marker";
 
 function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -34,6 +48,11 @@ const tauriBackend: Backend = {
   openSettingsWindow: () => invoke<void>("open_settings_window"),
   onFrame: (cb) => listen<RadarFrame>(FRAME_EVENT, (e) => cb(e.payload)),
   onSettings: (cb) => listen<RadarSettings>(SETTINGS_EVENT, (e) => cb(e.payload)),
+  listCaptureDevices: () => invoke<CaptureDevice[]>("list_capture_devices"),
+  getCaptureStatus: () => invoke<CaptureStatus | null>("get_capture_status"),
+  addCaptureMarker: (kind) => invoke<number>("add_capture_marker", { kind }),
+  getRecordingsDir: () => invoke<string>("get_recordings_dir"),
+  onMarker: (cb) => listen<string>(MARKER_EVENT, (e) => cb(e.payload)),
 };
 
 const PREVIEW_KEY = "aion2-radar-preview-settings";
@@ -67,6 +86,13 @@ function previewBackend(): Backend {
       window.open("settings.html", "_blank");
     },
     onFrame: async (cb) => startPreviewFrames(cb, load),
+    listCaptureDevices: async () => [],
+    getCaptureStatus: async () => null,
+    addCaptureMarker: async () => {
+      throw new Error("Packet capture runs only in the desktop app.");
+    },
+    getRecordingsDir: async () => "(desktop app only)",
+    onMarker: async () => () => {},
     onSettings: async (cb) => {
       listeners.add(cb);
       const onStorage = (e: StorageEvent) => e.key === PREVIEW_KEY && cb(load());

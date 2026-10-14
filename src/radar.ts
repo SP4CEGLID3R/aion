@@ -98,7 +98,10 @@ function bannerText(frame: RadarFrame | null, backendSilent: boolean): string | 
   const src = frame.source;
   if (src?.state === "error") return `Data source error: ${src.detail}`;
   if (src?.state === "disabled") return "No data source configured";
-  if (!frame.player) return src?.state === "waiting" ? `Waiting for telemetry — ${src.detail}` : "Waiting for player position";
+  if (!frame.player) {
+    if (src?.state === "waiting") return `Waiting for telemetry — ${src.detail}`;
+    return src?.detail ? `Waiting for player position — ${src.detail}` : "Waiting for player position";
+  }
   if (frame.player.stale) return "Player position is stale — positions may be off";
   if (src?.state === "finished") return "Replay finished";
   return null;
@@ -138,6 +141,15 @@ async function main(): Promise<void> {
     prev = cur;
     cur = { frame, at: performance.now() };
     updateStatus(frame);
+  });
+
+  let toastTimer = 0;
+  await backend.onMarker((message) => {
+    const toast = document.querySelector<HTMLElement>("#toast")!;
+    toast.textContent = message;
+    toast.hidden = false;
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => (toast.hidden = true), 1500);
   });
 
   document.querySelector("#btn-settings")!.addEventListener("click", () => {

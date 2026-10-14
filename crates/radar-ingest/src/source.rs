@@ -45,7 +45,7 @@ pub trait DataSource: Send {
 }
 
 /// Builds the source a configuration asks for; `None` for
-/// [`DataSourceConfig::None`].
+/// [`DataSourceConfig::None`] and for packet capture, which the app builds.
 pub fn from_config(config: &DataSourceConfig) -> Option<Box<dyn DataSource>> {
     match config {
         DataSourceConfig::Synthetic { seed, cube_count } => {
@@ -65,7 +65,8 @@ pub fn from_config(config: &DataSourceConfig) -> Option<Box<dyn DataSource>> {
             *looped,
         ))),
         DataSourceConfig::LocalTcp { port } => Some(Box::new(LocalTcpSource::new(*port))),
-        DataSourceConfig::None => None,
+        // Built by the app with `radar-capture`, which depends on this crate.
+        DataSourceConfig::PacketCapture { .. } | DataSourceConfig::None => None,
     }
 }
 
@@ -361,7 +362,7 @@ impl LocalTcpSource {
                     Ok(None) => {}
                     Err(e) => {
                         bad_lines += 1;
-                        if bad_lines <= 10 || bad_lines % 100 == 0 {
+                        if bad_lines <= 10 || bad_lines.is_multiple_of(100) {
                             log::warn!("telemetry line rejected ({bad_lines} so far): {e}");
                         }
                     }

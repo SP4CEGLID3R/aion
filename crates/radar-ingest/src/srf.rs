@@ -336,7 +336,7 @@ pub fn parse_hex_fixture(text: &str) -> Result<Vec<u8>, String> {
         let line = line.split('#').next().unwrap_or("");
         digits.extend(line.chars().filter(|c| !c.is_whitespace()));
     }
-    if digits.len() % 2 != 0 {
+    if !digits.len().is_multiple_of(2) {
         return Err("odd number of hex digits".into());
     }
     (0..digits.len())

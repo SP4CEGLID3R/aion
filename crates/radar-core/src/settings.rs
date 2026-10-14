@@ -81,6 +81,23 @@ pub enum DataSourceConfig {
         #[serde(default = "default_port")]
         port: u16,
     },
+    /// Passive capture of the game's own traffic (Npcap/libpcap), decoded
+    /// with a decoder profile. Built by the app from `radar-capture`.
+    PacketCapture {
+        /// Adapter name; `None` captures on every adapter and finds the game
+        /// connection by its heartbeat.
+        #[serde(default)]
+        device: Option<String>,
+        /// Replay a `.pcap`/`.pcapng` instead of capturing live.
+        #[serde(default)]
+        file: Option<String>,
+        /// Decoder profile JSON. Without one (or unvalidated), nothing is drawn.
+        #[serde(default, rename = "profilePath")]
+        profile_path: Option<String>,
+        /// Record the game connection (and markers) for discovery work.
+        #[serde(default)]
+        record: bool,
+    },
     /// No source: the radar shows only its "no data" state.
     None,
 }
@@ -281,6 +298,18 @@ impl RadarSettings {
                 ));
                 *port = default_port();
             }
+            DataSourceConfig::PacketCapture {
+                device,
+                file,
+                profile_path,
+                ..
+            } => {
+                for v in [device, file, profile_path] {
+                    if v.as_deref().is_some_and(|x| x.trim().is_empty()) {
+                        *v = None;
+                    }
+                }
+            }
             DataSourceConfig::Synthetic { cube_count, .. } if *cube_count > 200 => {
                 w.push(format!("cubeCount {cube_count} is above 200; using 200"));
                 *cube_count = 200;
@@ -372,6 +401,23 @@ mod tests {
         assert_eq!(
             s.sanitized().0.data_source,
             DataSourceConfig::LocalTcp { port: 47_810 }
+        );
+    }
+
+    #[test]
+    fn packet_capture_config_reads_and_blank_strings_become_none() {
+        let s: RadarSettings = serde_json::from_str(
+            r#"{"dataSource": {"kind": "packet_capture", "device": "", "profilePath": "p.json", "record": true}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            s.sanitized().0.data_source,
+            DataSourceConfig::PacketCapture {
+                device: None,
+                file: None,
+                profile_path: Some("p.json".into()),
+                record: true
+            }
         );
     }
 

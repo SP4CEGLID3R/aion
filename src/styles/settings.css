@@ -162,3 +162,36 @@ th {
 .rejected {
   color: #ff9b8a;
 }
+
+kbd,
+code {
+  background: #0b1220;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 12px;
+}
+
+a {
+  color: var(--accent);
+}
+
+#capture-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px 12px;
+  margin-top: 10px;
+}
+
+#capture-summary div,
+#debug-summary div {
+  overflow-wrap: anywhere;
+}
+
+#capture-summary div span {
+  color: var(--muted);
+}
+
+#capture .actions {
+  margin: 8px 0;
+}

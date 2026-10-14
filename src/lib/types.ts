@@ -70,7 +70,53 @@ export type DataSourceConfig =
   | { kind: "synthetic"; seed: number; cubeCount: number }
   | { kind: "replay"; path: string; speed: number; loop: boolean }
   | { kind: "local_tcp"; port: number }
+  | { kind: "packet_capture"; device: string | null; file: string | null; profilePath: string | null; record: boolean }
   | { kind: "none" };
+
+export interface CaptureDevice {
+  name: string;
+  description: string | null;
+  ipv4: string[];
+  loopback: boolean;
+}
+
+export interface OpcodeRow {
+  opcode: string;
+  count: number;
+  minLen: number;
+  maxLen: number;
+  bundled: number;
+  firstMs: number;
+  lastMs: number;
+  decoded: boolean;
+}
+
+export interface CaptureStatus {
+  running: boolean;
+  library: string | null;
+  devices: string[];
+  packets: number;
+  streams: {
+    segments: number;
+    flows: number;
+    gameStreams: number;
+    gaps: number;
+    framing: { frames: number; bundles: number; badBundles: number; resyncs: number; droppedBytes: number };
+    currentStream: string | null;
+  };
+  census: OpcodeRow[];
+  frames: number;
+  profile: string | null;
+  profileValidated: boolean;
+  decoded: number;
+  decodeErrors: number;
+  recording: string | null;
+  recordingBytes: number;
+  markersFile: string | null;
+  markers: number;
+  notes: string[];
+  error: string | null;
+}
 
 export interface CoordinateTransform {
   east: SourceAxis;

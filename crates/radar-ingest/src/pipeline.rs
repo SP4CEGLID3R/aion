@@ -251,7 +251,7 @@ fn process(
                 }
                 Err(e) => {
                     let n = shared.adapt_errors.fetch_add(1, Ordering::Relaxed) + 1;
-                    if n <= 10 || n % 100 == 0 {
+                    if n <= 10 || n.is_multiple_of(100) {
                         log::warn!("event rejected by adapter ({n} so far): {e}");
                     }
                 }

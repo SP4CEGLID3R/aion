@@ -80,6 +80,7 @@
               <option value="synthetic">Synthetic simulator (made-up data)</option>
               <option value="replay">Replay a file (.jsonl, .srf, .srf.hex)</option>
               <option value="local_tcp">Local telemetry on 127.0.0.1 (Radar Event Protocol v1)</option>
+              <option value="packet_capture">Packet capture — the game's own traffic (Npcap)</option>
               <option value="none">None</option>
             </select>
           </label>
@@ -94,6 +95,20 @@
           </div>
           <div data-source="local_tcp">
             <label>Port <input name="dataSource.port" type="number" min="1024" max="65535" step="1" /></label>
+          </div>
+          <div data-source="packet_capture">
+            <p class="hint">
+              Passive and receive-only: copies this PC's game traffic, never touches the game or changes packets.
+              Needs <a href="https://npcap.com" target="_blank" rel="noreferrer">Npcap</a> on Windows.
+              Cubes are drawn only with a <strong>validated</strong> decoder profile; until then this records and
+              counts packet types so the cube packet can be found.
+            </p>
+            <label>Adapter
+              <select name="dataSource.device"><option value="">All adapters (find the game automatically)</option></select>
+            </label>
+            <label>Decoder profile (.json) <input name="dataSource.profilePath" type="text" placeholder="C:\path\to\aion2-profile.json" /></label>
+            <label>Replay a capture file instead (.pcap / .pcapng) <input name="dataSource.file" type="text" placeholder="leave empty for live capture" /></label>
+            <label class="check"><input name="dataSource.record" type="checkbox" /> Record the game connection and markers (for finding the cube packet)</label>
           </div>
         </fieldset>
 
@@ -115,6 +130,23 @@
           <button type="button" id="reset">Reset to defaults</button>
         </div>
       </form>
+
+      <section id="capture" hidden>
+        <h2>Packet capture</h2>
+        <p class="hint">
+          While recording: press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> in game the moment a cube appears, and
+          <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> when you collect one. Then run
+          <code>radar-capture analyze</code> on the recording (see the README).
+        </p>
+        <div class="actions">
+          <button type="button" id="mark-visible">Mark: cube appeared</button>
+          <button type="button" id="mark-collected">Mark: cube collected</button>
+        </div>
+        <div id="capture-notes" class="note warn" hidden></div>
+        <div id="capture-summary"></div>
+        <h3>Packet types seen (most frequent first)</h3>
+        <table id="capture-census"><thead><tr><th>opcode</th><th>count</th><th>size</th><th>bundled</th><th>decoded</th></tr></thead><tbody></tbody></table>
+      </section>
 
       <section id="debug">
         <h2>Diagnostics</h2>

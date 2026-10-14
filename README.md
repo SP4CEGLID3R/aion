@@ -18,13 +18,18 @@ Xvfb with no compositor, so the transparent area renders black; on Windows it
 is see-through.*
 
 > [!IMPORTANT]
-> **It does not read AION 2 data yet.** Research showed that the AION 2 DPS
-> meter this project started from has no cube or position data and no API,
-> and no other validated source exists ([details](docs/01-dps-meter-research.md),
-> [what is missing](docs/03-data-availability.md)). The radar ships with a
-> synthetic simulator (always labelled **SYNTHETIC**) and accepts a
-> [documented event protocol](docs/radar-event-protocol.md) from any
-> authorized tool. It contains no guessed AION 2 packet formats.
+> **Cubes from the real game need one more step from you.** The radar can now
+> capture AION 2's traffic passively (Npcap) and finds and frames the game
+> connection. But **which packet announces a cube has not been identified by
+> anyone**, so no cube decoder is built in, and guessing one would show wrong
+> cubes. The app records your sessions and has tools to find the cube packet
+> from them; once you have, a small JSON *decoder profile* switches cubes on.
+> Step by step: [docs/04-packet-capture.md](docs/04-packet-capture.md).
+>
+> Until then it shows the built-in simulator (labelled **SYNTHETIC**), or
+> events from any tool speaking the [documented event protocol](docs/radar-event-protocol.md).
+> Background: [DPS-meter research](docs/01-dps-meter-research.md),
+> [what is missing](docs/03-data-availability.md).
 
 ## What it guarantees
 
@@ -59,21 +64,30 @@ the radar.
 * Configurable **stale timeout**, and whether stale cubes are hidden or marked.
 * Rendering at display refresh rate, with the player interpolated between
   20 Hz frames. Ingestion runs on its own threads and never blocks the UI.
-* Data sources: synthetic simulator, replay of `.jsonl` / `.srf` files, and a
-  loopback-only TCP socket for an authorized telemetry producer.
+* Data sources: **passive packet capture** of the game's traffic (with a
+  decoder profile), synthetic simulator, replay of `.jsonl` / `.srf` /
+  `.pcap` / `.pcapng` files, and a loopback-only TCP socket for any telemetry
+  producer.
+* Discovery tools for finding the cube packet: recording, global marker
+  hotkeys (**Ctrl+Alt+V** cube appeared, **Ctrl+Alt+C** collected), a live
+  packet-type census, and the `radar-capture` CLI (`analyze`, `inspect`,
+  `decode`).
 * A coordinate-frame mapping (axes, scale, origin, heading convention) for
   any source.
 * Logs to the console and to the app log directory.
 
 ## Safety and terms of service
 
-This project **does not** inject code, read or write game memory, capture or
-modify network traffic, bypass anti-cheat, or automate input. It reads only
-what a data source hands it over `127.0.0.1` or from a file.
+With packet capture on, the radar **copies** your PC's own TCP packets
+through Npcap (receive-only, non-promiscuous), like the Aether DPS meter. It
+**never** sends, blocks or modifies packets, injects code, opens or reads the
+game's process or memory, bypasses anti-cheat, or automates input. Recordings
+contain only the game connection.
 
-That is not a statement about AION 2's terms of service. Whether *any* overlay
-or data source is allowed is NCSoft's call. Check before connecting a real
-source.
+None of that is a promise about AION 2's terms of service. Using third-party
+tools with the game, and especially one that locates collectibles, may break
+NCSoft's rules and **can get your account banned**. You use it at your own
+risk.
 
 ## Quick start (development)
 
@@ -122,6 +136,13 @@ What is covered:
 * Coordinate transforms, bearings, screen projection (north-up and
   heading-up), rim clamping, settings sanitising, settings-file recovery,
   loopback TCP and replay timing.
+* Capture: link-layer/IP/TCP parsing, pcap and pcapng files, TCP reassembly
+  (reordering, retransmits, wrap-around, gaps), the documented AION 2 framing
+  (varint lengths, flag byte, padding, nested LZ4 bundles, heartbeat resync,
+  any chunking), game-stream detection and zone changes, census,
+  marker correlation, field inspection and decoder profiles. End to end, the
+  synthetic session's markers point at its spawn packet, and decoding it puts
+  exactly the live cubes on the radar.
 
 ## Building the Windows installer
 
@@ -139,15 +160,41 @@ Output:
   runtime if it is missing.
 * `target\release\bundle\msi\AION 2 Cube Radar_0.1.0_x64_en-US.msi`
 
-CI builds both on every push to `main` and on tags; see
-`.github/workflows/ci.yml`. The installers are not code-signed, so Windows
+The capture tool: `cargo build --release -p radar-capture` →
+`target\release\radar-capture.exe`.
+
+CI builds the installers and `radar-capture.exe` on every push to `main` and
+on tags; see `.github/workflows/ci.yml`. The installers are not code-signed, so Windows
 SmartScreen will warn on first run.
 
 Settings live in `%APPDATA%\dev.aion2radar.overlay\settings.json`, and logs
 in `%LOCALAPPDATA%\dev.aion2radar.overlay\logs\radar.log`. An invalid settings
 file is kept as `settings.json.bak` and replaced with defaults.
 
-## Connecting an authorized data source
+## Packet capture in short
+
+1. Install [Npcap](https://npcap.com).
+2. Settings → Data source → **Packet capture**, *All adapters*, **Record** on.
+   The panel should find the *Game connection* within seconds of logging in.
+3. Play, pressing **Ctrl+Alt+V** when a cube appears and **Ctrl+Alt+C** when
+   you collect one.
+4. `radar-capture analyze <recording>.pcap` ranks the packet types that line
+   up with your markers; `radar-capture inspect … --opcode "XX YY"` finds
+   coordinate and id fields.
+5. Write a decoder profile, check it with `radar-capture decode`, set
+   `"validated": true`, and choose it in Settings. Cubes appear on the radar.
+
+Practice on invented data first: `radar-capture synth demo.pcap` writes a
+demo capture, markers and profile.
+[docs/04-packet-capture.md](docs/04-packet-capture.md) has the details.
+
+<img src="docs/images/radar-capture-demo.png" width="280" alt="The radar fed by live packet capture of the synthetic demo stream over a real loopback TCP connection, decoded with the demo profile: one live cube beyond range shown as a rim arrow">
+
+*The full chain on a real TCP connection: libpcap capture → game stream
+detection → framing → demo profile → radar. The stream is the invented demo
+session, not AION 2.*
+
+## Connecting another data source
 
 Write a producer that speaks the
 [Radar Event Protocol v1](docs/radar-event-protocol.md): JSON lines over
@@ -162,6 +209,8 @@ a known coordinate frame, and a validation run.
 ```
 crates/radar-core/      event model, live-cube tracker, geometry, settings (pure Rust, no I/O)
 crates/radar-ingest/    sources, protocol, adapter, synthetic SRF parser, simulator, pipeline
+crates/radar-capture/   Npcap/libpcap capture, TCP reassembly, AION 2 framing, census,
+                        discovery, decoder profiles, capture source; `radar-capture` CLI
   fixtures/             acceptance.jsonl, malformed.jsonl, synthetic-session.srf.hex
   tests/acceptance.rs   end-to-end acceptance tests
 src-tauri/              Tauri shell: windows, commands, settings file, logging
@@ -177,7 +226,7 @@ docs/                   research, architecture, protocol, data availability
 | 1. Inspect the DPS meter's architecture and license | Done: [docs/01-dps-meter-research.md](docs/01-dps-meter-research.md) |
 | 2. Working radar with synthetic cubes | Done |
 | 3. Coordinate transformations and unit tests | Done |
-| 4. Validated, authorized telemetry adapter | Adapter and protocol done; **no validated AION 2 source exists** |
+| 4. Validated telemetry adapter | Protocol and adapter done. Passive packet capture, framing and discovery tools done; **the cube packet itself still has to be found from recordings** ([guide](docs/04-packet-capture.md)) |
 | 5. Verify game versions, document missing data | Done: [docs/03-data-availability.md](docs/03-data-availability.md) |
 | 6. Windows installer and build instructions | Config, CI job and instructions done. Not built on Windows in this environment |
 | 7. Live cube tracking, spawned cubes only | Done, with acceptance tests |

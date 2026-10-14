@@ -1,15 +1,23 @@
 //! Tauri shell: windows, settings persistence, and the bridge between the
-//! ingest pipeline and the webviews. All radar logic lives in `radar-core`
-//! and `radar-ingest`; this crate only wires them to the desktop.
+//! ingest pipeline and the webviews. All radar logic lives in `radar-core`,
+//! `radar-ingest` and `radar-capture`; this crate only wires them to the
+//! desktop.
 
 mod store;
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use radar_core::{RadarFrame, RadarSettings, WindowMode};
+use radar_capture::live::{Device, PcapApi};
+use radar_capture::{
+    CaptureConfig, CaptureInput, CaptureSource, CaptureStatus, DecoderProfile, SharedStatus,
+};
+use radar_core::{DataSourceConfig, RadarFrame, RadarSettings, WindowMode};
+use radar_ingest::source::DataSource;
 use radar_ingest::{DebugReport, Engine, FrameSink};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 use store::SettingsStore;
 
@@ -17,15 +25,19 @@ const RADAR: &str = "radar";
 const SETTINGS: &str = "settings";
 const FRAME_EVENT: &str = "radar-frame";
 const SETTINGS_EVENT: &str = "settings-changed";
+const MARKER_EVENT: &str = "capture-marker";
 
 struct Inner {
     settings: RadarSettings,
     engine: Option<Engine>,
+    /// Status of the packet-capture source, when that is the source.
+    capture: Option<SharedStatus>,
 }
 
 struct AppState {
     inner: Mutex<Inner>,
     store: SettingsStore,
+    recordings: PathBuf,
 }
 
 impl AppState {
@@ -51,12 +63,85 @@ struct SettingsUpdate {
     warnings: Vec<String>,
 }
 
-fn start_engine(app: &AppHandle, settings: &RadarSettings) -> (Option<Engine>, Vec<String>) {
-    match Engine::start(settings, Arc::new(TauriSink(app.clone()))) {
-        Ok(engine) => (Some(engine), Vec::new()),
+struct Started {
+    engine: Option<Engine>,
+    capture: Option<SharedStatus>,
+    warnings: Vec<String>,
+}
+
+/// Builds the packet-capture source. A missing or broken profile is not
+/// fatal: capture still runs for the census and recording, and draws nothing.
+fn capture_source(
+    cfg: &DataSourceConfig,
+    recordings: &Path,
+    warnings: &mut Vec<String>,
+) -> Option<(Box<dyn DataSource>, SharedStatus)> {
+    let DataSourceConfig::PacketCapture {
+        device,
+        file,
+        profile_path,
+        record,
+    } = cfg
+    else {
+        return None;
+    };
+    let profile = profile_path
+        .as_deref()
+        .and_then(|p| match DecoderProfile::load(Path::new(p)) {
+            Ok(profile) => {
+                if !profile.validated {
+                    warnings.push(format!(
+                    "decoder profile \"{}\" is not marked validated: nothing will be drawn from it",
+                    profile.name
+                ));
+                }
+                Some(profile)
+            }
+            Err(e) => {
+                warnings.push(format!(
+                    "decoder profile not loaded ({e}); capturing without one"
+                ));
+                None
+            }
+        });
+    let input = match file {
+        Some(path) => CaptureInput::File { path: path.into() },
+        None => CaptureInput::Live {
+            device: device.clone(),
+        },
+    };
+    let (source, status) = CaptureSource::new(CaptureConfig {
+        input,
+        profile,
+        record_dir: record.then(|| recordings.to_path_buf()),
+    });
+    Some((Box::new(source), status))
+}
+
+fn start_engine(app: &AppHandle, settings: &RadarSettings, recordings: &Path) -> Started {
+    let sink = Arc::new(TauriSink(app.clone()));
+    let mut warnings = Vec::new();
+    let (result, capture) = match capture_source(&settings.data_source, recordings, &mut warnings) {
+        Some((source, status)) => (
+            Engine::start_with(settings, Some(source), sink),
+            Some(status),
+        ),
+        None => (Engine::start(settings, sink), None),
+    };
+    match result {
+        Ok(engine) => Started {
+            engine: Some(engine),
+            capture,
+            warnings,
+        },
         Err(e) => {
             log::error!("could not start the radar pipeline: {e}");
-            (None, vec![format!("radar pipeline did not start: {e}")])
+            warnings.push(format!("radar pipeline did not start: {e}"));
+            Started {
+                engine: None,
+                capture: None,
+                warnings,
+            }
         }
     }
 }
@@ -137,9 +222,10 @@ fn update_settings(
             if let Some(old) = inner.engine.take() {
                 old.stop();
             }
-            let (engine, errors) = start_engine(&app, &settings);
-            inner.engine = engine;
-            warnings.extend(errors);
+            let started = start_engine(&app, &settings, &state.recordings);
+            inner.engine = started.engine;
+            inner.capture = started.capture;
+            warnings.extend(started.warnings);
         } else if let Some(engine) = &inner.engine {
             engine.update_display(settings.stale_display, settings.update_hz);
         }
@@ -174,8 +260,81 @@ fn open_settings_window(app: AppHandle) -> Result<(), String> {
     show_settings_window(&app).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn list_capture_devices() -> Result<Vec<Device>, String> {
+    let api = PcapApi::load().map_err(|e| e.to_string())?;
+    api.devices().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_capture_status(state: State<'_, AppState>) -> Option<CaptureStatus> {
+    let status = state.lock().capture.clone()?;
+    let s = status.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    Some(s)
+}
+
+#[tauri::command]
+fn add_capture_marker(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    kind: String,
+) -> Result<usize, String> {
+    mark(&app, &state, &kind)
+}
+
+#[tauri::command]
+fn get_recordings_dir(state: State<'_, AppState>) -> String {
+    state.recordings.display().to_string()
+}
+
+fn mark(app: &AppHandle, state: &AppState, kind: &str) -> Result<usize, String> {
+    let status = state
+        .lock()
+        .capture
+        .clone()
+        .ok_or("markers need the packet-capture source with recording on")?;
+    let result = radar_capture::add_marker(&status, kind);
+    let _ = app.emit(
+        MARKER_EVENT,
+        match &result {
+            Ok(n) => format!("Marker {n}: {}", kind.replace('_', " ")),
+            Err(e) => format!("Marker not saved: {e}"),
+        },
+    );
+    result
+}
+
+/// Ctrl+Alt+V: a cube appeared. Ctrl+Alt+C: a cube was collected. Global, so
+/// they work while the game has focus.
+fn marker_shortcuts() -> [(Shortcut, &'static str); 2] {
+    let mods = Some(Modifiers::CONTROL | Modifiers::ALT);
+    [
+        (Shortcut::new(mods, Code::KeyV), "cube_visible"),
+        (Shortcut::new(mods, Code::KeyC), "cube_collected"),
+    ]
+}
+
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let Some((_, kind)) =
+                        marker_shortcuts().into_iter().find(|(s, _)| s == shortcut)
+                    else {
+                        return;
+                    };
+                    if let Some(state) = app.try_state::<AppState>() {
+                        if let Err(e) = mark(app, &state, kind) {
+                            log::warn!("marker: {e}");
+                        }
+                    }
+                })
+                .build(),
+        )
         .plugin(
             tauri_plugin_log::Builder::new()
                 .clear_targets()
@@ -205,16 +364,28 @@ pub fn run() {
                 }
             }
 
-            let (engine, _) = start_engine(&handle, &loaded.settings);
+            let recordings = app.path().app_data_dir()?.join("recordings");
+            let started = start_engine(&handle, &loaded.settings, &recordings);
+            for w in &started.warnings {
+                log::warn!("{w}");
+            }
             let settings = loaded.settings.clone();
             // State first: the windows' scripts call commands as soon as they load.
             app.manage(AppState {
                 inner: Mutex::new(Inner {
                     settings: loaded.settings,
-                    engine,
+                    engine: started.engine,
+                    capture: started.capture,
                 }),
                 store,
+                recordings,
             });
+            for (shortcut, kind) in marker_shortcuts() {
+                // Another program may own the key; markers still work from the settings window.
+                if let Err(e) = app.global_shortcut().register(shortcut) {
+                    log::warn!("could not register the {kind} hotkey: {e}");
+                }
+            }
             create_radar_window(&handle, &settings)?;
             if loaded.first_run {
                 show_settings_window(&handle)?;
@@ -240,7 +411,11 @@ pub fn run() {
             update_settings,
             reset_settings,
             get_debug_report,
-            open_settings_window
+            open_settings_window,
+            list_capture_devices,
+            get_capture_status,
+            add_capture_marker,
+            get_recordings_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running the radar");

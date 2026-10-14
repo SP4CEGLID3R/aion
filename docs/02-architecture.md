@@ -30,8 +30,8 @@
 
 | Layer (requirement 5) | Code | Tests |
 |---|---|---|
-| 1. Data-source adapters | `crates/radar-ingest/src/source.rs`, `adapter.rs` | unit tests in both; TCP loopback test |
-| 2. Event ingestion and parsing | `wire.rs` (protocol), `srf.rs` (synthetic byte-stream parser) | malformed input, chunking, resync, fixtures |
+| 1. Data-source adapters | `crates/radar-ingest/src/source.rs`, `adapter.rs`; `crates/radar-capture/src/source.rs` (packet capture) | unit tests; TCP loopback test; live loopback capture checked manually |
+| 2. Event ingestion and parsing | `wire.rs` (protocol), `srf.rs` (synthetic byte-stream parser); `radar-capture`: `net.rs`, `reassembly.rs`, `framing.rs`, `streams.rs`, `profile.rs` | malformed input, chunking, resync, fixtures, reassembly, bundles, workflow tests |
 | 3. Entity and coordinate state | `crates/radar-core/src/tracker.rs`, `geometry.rs` | 6 acceptance tests + 14 more; transform tests |
 | 4. Radar projection and rendering | `src/lib/projection.ts`, `layout.ts`, `renderer.ts` | vitest |
 | 5. Settings and logging | `radar-core/src/settings.rs`, `src-tauri/src/store.rs`, `tauri-plugin-log` | sanitising, round-trip, corrupt-file recovery |
@@ -58,6 +58,12 @@ Aether's recorder).
 **Zone changes reset everything.** Aether found that entity ids are per
 connection: the same character had one id in town and another in a dungeon.
 Ids are not assumed to survive a zone change, here or in any future source.
+
+**Packet capture is a data source like any other.** `radar-capture` turns
+captured packets into the same `WireEvent`s as the protocol, through a decoder
+*profile* (data, not code), so a new game patch means editing JSON, not
+rebuilding. A profile not marked validated decodes for diagnostics but sends
+nothing to the radar. See [04-packet-capture.md](./04-packet-capture.md).
 
 **Parser isolated from overlay.** `srf.rs` and `wire.rs` produce plain
 `WireEvent`s and know nothing about the tracker or UI. The tracker knows
