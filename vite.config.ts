@@ -2,7 +2,8 @@ import { defineConfig } from "vitest/config";
 
 const page = (name: string) => new URL(name, import.meta.url).pathname;
 
-// Two pages: the radar overlay and the settings window.
+// Three pages: the radar overlay, the settings window and the arrow around
+// the character.
 export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true },
@@ -13,6 +14,7 @@ export default defineConfig({
       input: {
         radar: page("index.html"),
         settings: page("settings.html"),
+        guide: page("guide.html"),
       },
     },
   },

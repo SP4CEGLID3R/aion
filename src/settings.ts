@@ -3,6 +3,7 @@
 
 import { backend } from "./lib/bridge";
 import { alertError, playAlert } from "./lib/sound";
+import { initMinimapSetup, renderMinimapStatus } from "./minimapSetup";
 import type {
   Aion2Status,
   CaptureStatus,
@@ -205,6 +206,8 @@ function renderDebug(r: DebugReport | null): void {
 function positionText(a: Aion2Status): string {
   const age = a.positionAgeMs !== null ? ` (${(a.positionAgeMs / 1000).toFixed(1)} s ago)` : "";
   switch (a.positionSource) {
+    case "minimap":
+      return `followed with the minimap${age}`;
     case "client":
       return `live from your client's movement${age}`;
     case "estimate":
@@ -218,20 +221,29 @@ function positionText(a: Aion2Status): string {
 
 function trackingText(a: Aion2Status): string {
   const parts: string[] = [];
-  const m = a.movement;
-  parts.push(
-    m.state === "found"
-      ? `client movement: found (${m.updates} updates)`
-      : m.state === "learning"
-        ? `client movement: learning (${m.clientFrames} client packets, ${m.fixesSeen} server fixes)`
-        : "client movement: off",
-  );
+  const mm = a.minimap;
+  if (mm.frames > 0) {
+    const scale = mm.pxPerM ? `${mm.pxPerM.toFixed(2)} px/m` : "?";
+    const cal = mm.legs >= 3 ? `confirmed by ${mm.legs} legs` : "default scale";
+    const why = mm.state === "tracking" ? "" : ` — ${mm.reason || mm.state}`;
+    parts.push(`minimap: ${mm.state} (${scale}, ${cal}, axes ${mm.axis})${why}`);
+  } else {
+    parts.push("minimap: no frames");
+  }
   const e = a.estimate;
   const check = e.checkErrorM !== null ? `, checked ${e.checks}× — off by ${e.checkErrorM.toFixed(1)} m (median)` : "";
   parts.push(
-    `estimate: ${e.radiiKnown} object types with known range, ${e.rangeUpdates} updates${check}` +
+    `estimate from objects: ${e.radiiKnown} object types with known range, ${e.rangeUpdates} updates${check}` +
       (e.trusted ? "" : " — NOT shown: checks disagree"),
   );
+  const m = a.movement;
+  if (m.state !== "off") {
+    parts.push(
+      m.state === "found"
+        ? `client movement: found (${m.updates} updates)`
+        : `client movement: learning (${m.clientFrames} client packets, ${m.fixesSeen} server fixes)`,
+    );
+  }
   return parts.join("; ");
 }
 
@@ -336,6 +348,14 @@ async function main(): Promise<void> {
     const err = sound.file ? alertError() : null;
     result.textContent = err ? `${err} — played the built-in chime instead` : sound.file ? "" : "built-in chime";
   });
+  document.querySelector("#desktop-shortcut")!.addEventListener("click", async () => {
+    const result = document.querySelector<HTMLElement>("#desktop-shortcut-result")!;
+    try {
+      result.textContent = `Created: ${await backend.createDesktopShortcut()}`;
+    } catch (err) {
+      result.textContent = String(err);
+    }
+  });
   document.querySelector("#reset")!.addEventListener("click", async () => {
     const res = await backend.resetSettings();
     fill(res.settings);
@@ -355,10 +375,22 @@ async function main(): Promise<void> {
     });
   }
 
+  initMinimapSetup({
+    settings: () => current,
+    apply: async (next) => {
+      const res = await backend.updateSettings(next);
+      fill(res.settings);
+      showWarnings(res.warnings);
+    },
+    warn: showWarnings,
+  });
+
   const poll = async () => {
     try {
       renderDebug(await backend.getDebugReport());
-      renderCapture(await backend.getCaptureStatus());
+      const capture = await backend.getCaptureStatus();
+      renderCapture(capture);
+      renderMinimapStatus(current, await backend.getMinimapStatus(), capture);
     } catch (err) {
       console.error(err);
     }

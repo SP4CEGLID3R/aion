@@ -8,6 +8,86 @@ export type SourceState = "starting" | "connected" | "waiting" | "finished" | "e
 export type SourceAxis = "pos_x" | "neg_x" | "pos_y" | "neg_y" | "pos_z" | "neg_z";
 export type RadarStyle = "radar" | "minimap";
 
+/** Physical screen pixels (virtual screen). */
+export interface ScreenRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface MinimapSettings {
+  enabled: boolean;
+  /** null = the default spot of the default HUD. */
+  region: ScreenRegion | null;
+  fps: number;
+  background: boolean;
+}
+
+export interface GuideSettings {
+  radarArrow: boolean;
+  screenArrow: boolean;
+  screenX: number;
+  screenY: number;
+  screenSize: number;
+}
+
+/** The decoder's view of the minimap (scale, state, camera). */
+export interface MinimapView {
+  pxPerM: number | null;
+  calibrated: boolean;
+  state: string;
+  reason: string;
+  cameraDeg: number | null;
+  legs: number;
+}
+
+/** The screen reader's own status. */
+export interface VisionStatus {
+  running: boolean;
+  region: ScreenRegion | null;
+  defaultRegion: boolean;
+  uiScale: number;
+  frames: number;
+  grabMs: number;
+  trackMs: number;
+  black: boolean;
+  frozen: boolean;
+  breaks: number;
+  coneClear: boolean;
+  error: string | null;
+}
+
+export interface MonitorInfo {
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scale: number;
+  primary: boolean;
+}
+
+export interface MinimapFrame {
+  seq: number;
+  w: number;
+  h: number;
+  pivotX: number;
+  pivotY: number;
+  /** Minimap pixels per metre (0 = unknown). */
+  pxPerM: number;
+  calibrated: boolean;
+  rgba: Uint8ClampedArray<ArrayBuffer>;
+}
+
+export interface Screenshot {
+  w: number;
+  h: number;
+  x: number;
+  y: number;
+  rgba: Uint8ClampedArray<ArrayBuffer>;
+}
+
 export interface AlertSound {
   enabled: boolean;
   /** 0 – 1. */
@@ -122,8 +202,22 @@ export interface Aion2Status {
   objectsTracked: number;
   lastObjectSpawnMs: number | null;
   learnedTemplates: number[];
-  positionSource: "client" | "server" | "estimate" | "none";
+  positionSource: "minimap" | "client" | "server" | "estimate" | "none";
   positionAgeMs: number | null;
+  minimap: {
+    state: string;
+    reason: string;
+    pxPerM: number | null;
+    axis: string;
+    legs: number;
+    axisConfirmed: boolean;
+    frames: number;
+    breaks: number;
+    lastFrameAgeMs: number | null;
+    cameraDeg: number | null;
+    black: boolean;
+    frozen: boolean;
+  };
   movement: { state: "learning" | "found" | "off"; source: unknown; updates: number; clientFrames: number; fixesSeen: number };
   estimate: {
     radiiKnown: number;
@@ -196,6 +290,8 @@ export interface RadarSettings {
   mapGrid: boolean;
   showTrail: boolean;
   alertSound: AlertSound;
+  minimap: MinimapSettings;
+  guide: GuideSettings;
 }
 
 export interface SettingsUpdate {
@@ -277,4 +373,6 @@ export const DEFAULT_SETTINGS: RadarSettings = {
   mapGrid: true,
   showTrail: true,
   alertSound: { enabled: true, volume: 0.8, file: null },
+  minimap: { enabled: true, region: null, fps: 10, background: true },
+  guide: { radarArrow: true, screenArrow: true, screenX: 0.5, screenY: 0.62, screenSize: 260 },
 };

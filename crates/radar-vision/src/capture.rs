@@ -45,6 +45,8 @@ pub struct RegionGrabber {
     rect: ScreenRect,
     #[cfg(windows)]
     inner: gdi::Grabber,
+    #[cfg(not(windows))]
+    inner: dev_synth::Synth,
 }
 
 impl RegionGrabber {
@@ -64,8 +66,9 @@ impl RegionGrabber {
         }
         #[cfg(not(windows))]
         {
-            let _ = rect;
-            Err(CaptureError::Unsupported)
+            dev_synth::Synth::new(rect)
+                .map(|inner| RegionGrabber { rect, inner })
+                .ok_or(CaptureError::Unsupported)
         }
     }
 
@@ -81,14 +84,18 @@ impl RegionGrabber {
         }
         #[cfg(not(windows))]
         {
-            let _ = out;
-            Err(CaptureError::Unsupported)
+            self.inner.grab(out);
+            Ok(())
         }
     }
 }
 
 /// A one-off capture of any rectangle (for picking the minimap), BGRX rows.
 pub fn grab_once(rect: ScreenRect) -> Result<Vec<u8>, CaptureError> {
+    #[cfg(not(windows))]
+    if let Some(desk) = dev_synth::desktop(rect) {
+        return Ok(desk);
+    }
     let mut g = RegionGrabber::new(rect)?;
     let mut out = Vec::new();
     g.grab(&mut out)?;
@@ -218,6 +225,115 @@ mod gdi {
                 let _ = DeleteDC(self.mem_dc);
             }
         }
+    }
+}
+
+/// Development only (never on Windows): with `RADAR_VISION_SYNTH` set to the
+/// unix time (ms) a synthetic game session started, captures show a
+/// synthetic minimap following that session's walk
+/// (`radar_capture::synthetic::aion2_layout::player`), so the whole app can be
+/// tried end to end without the game. Without the variable, capture is
+/// unsupported here.
+#[cfg(not(windows))]
+mod dev_synth {
+    use super::ScreenRect;
+    use crate::synth::{frame, Overlay, SynthMap};
+
+    /// The synthetic session's walk, game units (cm) at `rel` ms.
+    fn player(rel: f64) -> (f64, f64) {
+        let s = rel / 1000.0;
+        (
+            -45_000.0 + (s * 0.05).sin() * 3_000.0,
+            120_000.0 + (s * 0.04).cos() * 3_000.0,
+        )
+    }
+
+    fn t0() -> Option<f64> {
+        std::env::var("RADAR_VISION_SYNTH").ok()?.parse().ok()
+    }
+
+    fn now() -> f64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64() * 1000.0)
+            .unwrap_or(0.0)
+    }
+
+    pub struct Synth {
+        map: SynthMap,
+        w: usize,
+        h: usize,
+        t0: f64,
+        /// Minimap px per game unit (seed scale for this region size).
+        k: f64,
+        ui: f64,
+    }
+
+    impl Synth {
+        pub fn new(rect: ScreenRect) -> Option<Synth> {
+            let t0 = t0()?;
+            let ui = rect.height as f64 / 206.0;
+            Some(Synth {
+                map: SynthMap::new(1400, 1200, 5),
+                w: rect.width as usize,
+                h: rect.height as usize,
+                t0,
+                k: 0.0103 * ui,
+                ui,
+            })
+        }
+
+        pub fn grab(&mut self, out: &mut Vec<u8>) {
+            let rel = (now() - self.t0).max(0.0);
+            let (x, y) = player(rel);
+            let (x0, y0) = player(0.0);
+            // Right = +X, down = +Y, as on the game's minimap.
+            let cx = 700.0 + (x - x0) * self.k;
+            let cy = 600.0 + (y - y0) * self.k;
+            let s = rel / 1000.0;
+            let ov = Overlay {
+                cone: (30.0 + 50.0 * (s / 6.0).sin()).rem_euclid(360.0),
+                facing: (60.0 + 40.0 * (s / 4.0).sin()).rem_euclid(360.0),
+                ring_r: 67.0,
+                dots: vec![(self.w as f64 * 0.3 + 15.0 * s.sin(), self.h as f64 * 0.7)],
+                ui_scale: self.ui,
+            };
+            *out = frame(&self.map, cx, cy, self.w, self.h, &ov);
+        }
+    }
+
+    /// A synthetic desktop with the minimap at its default spot.
+    pub fn desktop(rect: ScreenRect) -> Option<Vec<u8>> {
+        t0()?;
+        let (w, h) = (rect.width as usize, rect.height as usize);
+        let mut out = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 4;
+                let v = (30 + (x * 40 / w.max(1)) + (y * 30 / h.max(1))) as u8;
+                out[i..i + 4].copy_from_slice(&[v + 10, v, v / 2 + 20, 255]);
+            }
+        }
+        let s = h as f64 / 1440.0;
+        let mw = (311.0 * s).round() as usize;
+        let mh = (206.0 * s).round() as usize;
+        let mx = (w as f64 - 339.0 * s).round() as usize;
+        let my = (126.0 * s).round() as usize;
+        let mut g = Synth::new(ScreenRect {
+            x: 0,
+            y: 0,
+            width: mw as u32,
+            height: mh as u32,
+        })?;
+        let mut mini = Vec::new();
+        g.grab(&mut mini);
+        for y in 0..mh.min(h.saturating_sub(my)) {
+            for x in 0..mw.min(w.saturating_sub(mx)) {
+                let (si, di) = ((y * mw + x) * 4, ((my + y) * w + mx + x) * 4);
+                out[di..di + 4].copy_from_slice(&mini[si..si + 4]);
+            }
+        }
+        Some(out)
     }
 }
 

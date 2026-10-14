@@ -3,30 +3,40 @@
 //! `radar-ingest` and `radar-capture`; this crate only wires them to the
 //! desktop.
 
+mod minimap;
 mod store;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use radar_capture::aion2::{Aion2Learned, North};
 use radar_capture::live::{Device, PcapApi};
+use radar_capture::minimap::{MinimapLink, MinimapView};
 use radar_capture::{
     Aion2Config, CaptureConfig, CaptureInput, CaptureSource, CaptureStatus, DecoderChoice,
     DecoderProfile, SharedStatus,
 };
 use radar_core::{
-    CaptureDecoder, CaptureNorth, DataSourceConfig, RadarFrame, RadarSettings, WindowMode,
+    CaptureDecoder, CaptureNorth, DataSourceConfig, MinimapSettings, RadarFrame, RadarSettings,
+    ScreenRegion, WindowMode,
 };
 use radar_ingest::source::DataSource;
 use radar_ingest::{DebugReport, Engine, FrameSink};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, State, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
+};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+use minimap::MinimapService;
 use store::SettingsStore;
 
 const RADAR: &str = "radar";
 const SETTINGS: &str = "settings";
+/// The arrow around the character, over the game.
+const GUIDE: &str = "guide";
 const FRAME_EVENT: &str = "radar-frame";
 const SETTINGS_EVENT: &str = "settings-changed";
 const MARKER_EVENT: &str = "capture-marker";
@@ -38,6 +48,8 @@ struct Inner {
     engine: Option<Engine>,
     /// Status of the packet-capture source, when that is the source.
     capture: Option<SharedStatus>,
+    /// The minimap reader, when it runs.
+    minimap: Option<MinimapService>,
 }
 
 struct AppState {
@@ -52,13 +64,16 @@ impl AppState {
     }
 }
 
-/// Pushes frames to the radar window only; the settings window polls.
+/// Pushes frames to the radar and the guide arrow; the settings window polls.
 struct TauriSink(AppHandle);
 
 impl FrameSink for TauriSink {
     fn publish(&self, frame: &RadarFrame) {
-        // Fails only while the window is being created or closed.
+        // Fails only while a window is being created or closed.
         let _ = self.0.emit_to(RADAR, FRAME_EVENT, frame);
+        if self.0.get_webview_window(GUIDE).is_some() {
+            let _ = self.0.emit_to(GUIDE, FRAME_EVENT, frame);
+        }
     }
 }
 
@@ -72,6 +87,7 @@ struct SettingsUpdate {
 struct Started {
     engine: Option<Engine>,
     capture: Option<SharedStatus>,
+    minimap: Option<MinimapService>,
     warnings: Vec<String>,
 }
 
@@ -81,6 +97,7 @@ fn capture_source(
     cfg: &DataSourceConfig,
     paths: &Paths,
     warnings: &mut Vec<String>,
+    minimap: Option<Arc<MinimapLink>>,
 ) -> Option<(Box<dyn DataSource>, SharedStatus)> {
     let DataSourceConfig::PacketCapture {
         device,
@@ -141,7 +158,7 @@ fn capture_source(
         decoder,
         record_dir: record.then(|| paths.recordings.clone()),
         learned_path: Some(paths.config_dir.join(LEARNED_FILE)),
-        minimap: None, // wired up in the next step
+        minimap,
     });
     Some((Box::new(source), status))
 }
@@ -188,20 +205,91 @@ struct Paths {
     config_dir: PathBuf,
 }
 
+/// Minimap tracking needs live packet capture with the AION 2 decoder: the
+/// minimap only gives movement, the server fixes say where it starts.
+fn wants_minimap(s: &RadarSettings) -> bool {
+    s.minimap.enabled
+        && matches!(
+            &s.data_source,
+            DataSourceConfig::PacketCapture {
+                decoder: CaptureDecoder::Aion2,
+                file: None,
+                ..
+            }
+        )
+}
+
+fn monitor_rect(m: &Monitor) -> (i32, i32, u32, u32) {
+    let (p, s) = (m.position(), m.size());
+    (p.x, p.y, s.width, s.height)
+}
+
+fn main_monitor(app: &AppHandle) -> Option<Monitor> {
+    app.primary_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| app.available_monitors().ok()?.into_iter().next())
+}
+
+fn monitor_at(app: &AppHandle, x: i32, y: i32) -> Option<Monitor> {
+    app.available_monitors().ok()?.into_iter().find(|m| {
+        let (mx, my, mw, mh) = monitor_rect(m);
+        x >= mx && y >= my && x < mx + mw as i32 && y < my + mh as i32
+    })
+}
+
+/// (region, is the default spot, UI scale) for the minimap reader.
+fn minimap_region(app: &AppHandle, m: &MinimapSettings) -> Option<(ScreenRegion, bool, f64)> {
+    match m.region {
+        Some(r) => {
+            let (cx, cy) = (r.x + r.width as i32 / 2, r.y + r.height as i32 / 2);
+            let scale = monitor_at(app, cx, cy)
+                .or_else(|| main_monitor(app))
+                .map(|mon| minimap::ui_scale(mon.size().height))
+                .unwrap_or(r.height as f64 / 206.0);
+            Some((r, false, scale))
+        }
+        None => {
+            let (x, y, w, h) = monitor_rect(&main_monitor(app)?);
+            Some((
+                minimap::default_region(x, y, w, h),
+                true,
+                minimap::ui_scale(h),
+            ))
+        }
+    }
+}
+
 fn start_engine(app: &AppHandle, settings: &RadarSettings, paths: &Paths) -> Started {
     let sink = Arc::new(TauriSink(app.clone()));
     let mut warnings = Vec::new();
-    let (result, capture) = match capture_source(&settings.data_source, paths, &mut warnings) {
-        Some((source, status)) => (
-            Engine::start_with(settings, Some(source), sink),
-            Some(status),
-        ),
-        None => (Engine::start(settings, sink), None),
-    };
+    let link = wants_minimap(settings).then(|| Arc::new(MinimapLink::new()));
+    let (result, capture) =
+        match capture_source(&settings.data_source, paths, &mut warnings, link.clone()) {
+            Some((source, status)) => (
+                Engine::start_with(settings, Some(source), sink),
+                Some(status),
+            ),
+            None => (Engine::start(settings, sink), None),
+        };
+    let minimap = link.and_then(|link| match minimap_region(app, &settings.minimap) {
+        Some((region, default, scale)) => Some(MinimapService::start(
+            region,
+            default,
+            scale,
+            settings.minimap.fps,
+            link,
+        )),
+        None => {
+            warnings.push("minimap tracking: no monitor found".into());
+            None
+        }
+    });
     match result {
         Ok(engine) => Started {
             engine: Some(engine),
             capture,
+            minimap,
             warnings,
         },
         Err(e) => {
@@ -210,6 +298,7 @@ fn start_engine(app: &AppHandle, settings: &RadarSettings, paths: &Paths) -> Sta
             Started {
                 engine: None,
                 capture: None,
+                minimap: None,
                 warnings,
             }
         }
@@ -222,6 +311,92 @@ fn needs_restart(old: &RadarSettings, new: &RadarSettings) -> bool {
         || old.coordinate_transform != new.coordinate_transform
         || old.stale_timeout_secs != new.stale_timeout_secs
         || old.stale_retain_secs != new.stale_retain_secs
+        || old.minimap.enabled != new.minimap.enabled
+        || old.minimap.region != new.minimap.region
+        || old.minimap.fps != new.minimap.fps
+}
+
+/// While the minimap is read from the screen, the radar and the guide arrow
+/// keep out of screen captures (WDA_EXCLUDEFROMCAPTURE), so placing them
+/// over the minimap cannot disturb the tracking. They then also do not show
+/// in recordings and screenshots.
+fn apply_protection(app: &AppHandle, s: &RadarSettings) {
+    let on = wants_minimap(s);
+    for label in [RADAR, GUIDE] {
+        if let Some(w) = app.get_webview_window(label) {
+            if let Err(e) = w.set_content_protected(on) {
+                log::warn!("content protection: {e}");
+            }
+        }
+    }
+}
+
+/// The monitor the game (its minimap) is on.
+fn game_monitor(app: &AppHandle, s: &RadarSettings) -> Option<Monitor> {
+    match minimap_region(app, &s.minimap) {
+        Some((r, _, _)) => monitor_at(app, r.x + r.width as i32 / 2, r.y + r.height as i32 / 2)
+            .or_else(|| main_monitor(app)),
+        None => main_monitor(app),
+    }
+}
+
+/// Shows, moves or closes the arrow window around the character. Not from
+/// a synchronous command (window creation deadlocks there on Windows).
+fn sync_guide_window(app: &AppHandle, s: &RadarSettings) {
+    let want = s.guide.screen_arrow && wants_minimap(s);
+    let existing = app.get_webview_window(GUIDE);
+    if !want {
+        if let Some(w) = existing {
+            let _ = w.close();
+        }
+        return;
+    }
+    let Some(mon) = game_monitor(app, s) else {
+        return;
+    };
+    let (mx, my, mw, mh) = monitor_rect(&mon);
+    let size = s.guide.screen_size;
+    let (w_px, h_px) = (size.round() as u32, (size * 0.75).round() as u32);
+    let x = mx + (s.guide.screen_x * mw as f64 - w_px as f64 / 2.0).round() as i32;
+    let y = my + (s.guide.screen_y * mh as f64 - h_px as f64 / 2.0).round() as i32;
+    let scale = mon.scale_factor().max(0.1);
+    let window = match existing {
+        Some(w) => w,
+        None => {
+            let built = WebviewWindowBuilder::new(app, GUIDE, WebviewUrl::App("guide.html".into()))
+                .title("Cube guide")
+                .inner_size(w_px as f64 / scale, h_px as f64 / scale)
+                .position(x as f64 / scale, y as f64 / scale)
+                .transparent(true)
+                .decorations(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                // Resizable so later size changes apply (GTK ignores them on
+                // fixed-size windows); clicks pass through it anyway.
+                .resizable(true)
+                .shadow(false)
+                .focused(false)
+                .content_protected(true)
+                .build();
+            match built {
+                Ok(w) => w,
+                Err(e) => {
+                    log::warn!("guide window: {e}");
+                    return;
+                }
+            }
+        }
+    };
+    let results = [
+        window.set_size(PhysicalSize::new(w_px, h_px)),
+        window.set_position(PhysicalPosition::new(x, y)),
+        window.set_ignore_cursor_events(true),
+    ];
+    for r in results {
+        if let Err(e) = r {
+            log::warn!("guide window: {e}");
+        }
+    }
 }
 
 fn apply_window_mode(window: &WebviewWindow, s: &RadarSettings) {
@@ -254,6 +429,7 @@ fn create_radar_window(app: &AppHandle, s: &RadarSettings) -> tauri::Result<Webv
         .shadow(!overlay)
         // Do not take the keyboard from the game when the overlay appears.
         .focused(false)
+        .content_protected(wants_minimap(s))
         .build()?;
     apply_window_mode(&window, s);
     Ok(window)
@@ -278,12 +454,25 @@ fn get_settings(state: State<'_, AppState>) -> RadarSettings {
     state.lock().settings.clone()
 }
 
+/// Async: applying settings may open the guide window.
 #[tauri::command]
-fn update_settings(
+async fn update_settings(
     app: AppHandle,
     state: State<'_, AppState>,
     settings: RadarSettings,
-) -> SettingsUpdate {
+) -> Result<SettingsUpdate, String> {
+    Ok(apply_settings(&app, &state, settings))
+}
+
+#[tauri::command]
+async fn reset_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<SettingsUpdate, String> {
+    Ok(apply_settings(&app, &state, RadarSettings::default()))
+}
+
+fn apply_settings(app: &AppHandle, state: &AppState, settings: RadarSettings) -> SettingsUpdate {
     let (settings, mut warnings) = settings.sanitized();
     {
         let mut inner = state.lock();
@@ -292,9 +481,13 @@ fn update_settings(
             if let Some(old) = inner.engine.take() {
                 old.stop();
             }
-            let started = start_engine(&app, &settings, &state.paths);
+            if let Some(old) = inner.minimap.take() {
+                old.stop();
+            }
+            let started = start_engine(app, &settings, &state.paths);
             inner.engine = started.engine;
             inner.capture = started.capture;
+            inner.minimap = started.minimap;
             warnings.extend(started.warnings);
         } else if let Some(engine) = &inner.engine {
             engine.update_display(settings.stale_display, settings.update_hz);
@@ -308,16 +501,13 @@ fn update_settings(
     if let Some(w) = app.get_webview_window(RADAR) {
         apply_window_mode(&w, &settings);
     }
+    apply_protection(app, &settings);
+    sync_guide_window(app, &settings);
     let _ = app.emit(SETTINGS_EVENT, &settings);
     for w in &warnings {
         log::warn!("settings: {w}");
     }
     SettingsUpdate { settings, warnings }
-}
-
-#[tauri::command]
-fn reset_settings(app: AppHandle, state: State<'_, AppState>) -> SettingsUpdate {
-    update_settings(app, state, RadarSettings::default())
 }
 
 #[tauri::command]
@@ -381,6 +571,149 @@ fn read_sound_file(path: String) -> Result<tauri::ipc::Response, String> {
 #[tauri::command]
 fn get_recordings_dir(state: State<'_, AppState>) -> String {
     state.paths.recordings.display().to_string()
+}
+
+#[tauri::command]
+fn get_minimap_status(state: State<'_, AppState>) -> Option<minimap::VisionStatus> {
+    state.lock().minimap.as_ref().map(|m| m.shared.status())
+}
+
+/// The decoder's view of the minimap: scale, tracking state, camera.
+#[tauri::command]
+fn get_minimap_view(state: State<'_, AppState>) -> Option<MinimapView> {
+    state.lock().minimap.as_ref().map(|m| m.link.view())
+}
+
+/// The latest minimap picture if newer than `after` (see
+/// `minimap::Shared::frame_after` for the layout); empty otherwise.
+#[tauri::command]
+fn minimap_frame(state: State<'_, AppState>, after: u64) -> tauri::ipc::Response {
+    let parts = {
+        let inner = state.lock();
+        inner
+            .minimap
+            .as_ref()
+            .map(|m| (m.shared.clone(), m.link.clone()))
+    };
+    let Some((shared, link)) = parts else {
+        return tauri::ipc::Response::new(Vec::new());
+    };
+    let view = link.view();
+    tauri::ipc::Response::new(shared.frame_after(after, view.px_per_m, view.calibrated))
+}
+
+/// Puts a shortcut to this app on the desktop (Windows: a normal .lnk, made
+/// with the Windows Script Host). Returns where it was written.
+#[tauri::command]
+async fn create_desktop_shortcut(app: AppHandle) -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let desktop = app.path().desktop_dir().map_err(|e| e.to_string())?;
+    let link = desktop.join("AION 2 Cube Radar.lnk");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // PowerShell single-quoted strings: double any quote inside.
+        let q = |p: &Path| format!("'{}'", p.display().to_string().replace('\'', "''"));
+        let dir: &Path = exe.parent().unwrap_or(exe.as_path());
+        let script = format!(
+            "$s = (New-Object -ComObject WScript.Shell).CreateShortcut({}); \
+             $s.TargetPath = {}; $s.WorkingDirectory = {}; $s.IconLocation = {}; $s.Save()",
+            q(link.as_path()),
+            q(exe.as_path()),
+            q(dir),
+            q(exe.as_path())
+        );
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let status = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .map_err(|e| format!("could not run PowerShell: {e}"))?;
+        if !status.success() || !link.exists() {
+            return Err(format!("the shortcut could not be created ({status})"));
+        }
+        Ok(link.display().to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (exe, link);
+        Err("desktop shortcuts are made by the Windows installer or on Windows only".into())
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitorInfo {
+    name: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    scale: f64,
+    primary: bool,
+}
+
+#[tauri::command]
+fn list_monitors(app: AppHandle) -> Vec<MonitorInfo> {
+    let primary = main_monitor(&app).map(|m| monitor_rect(&m));
+    app.available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| {
+            let (x, y, width, height) = monitor_rect(m);
+            MonitorInfo {
+                name: m.name().cloned().unwrap_or_default(),
+                x,
+                y,
+                width,
+                height,
+                scale: m.scale_factor(),
+                primary: primary == Some((x, y, width, height)),
+            }
+        })
+        .collect()
+}
+
+/// Where the minimap sits on monitor `index` with the default HUD.
+#[tauri::command]
+fn default_minimap_region(app: AppHandle, index: usize) -> Result<ScreenRegion, String> {
+    let monitors = app.available_monitors().map_err(|e| e.to_string())?;
+    let m = monitors.get(index).ok_or("no such monitor")?;
+    let (x, y, w, h) = monitor_rect(m);
+    Ok(minimap::default_region(x, y, w, h))
+}
+
+/// A screenshot of monitor `index` for picking the minimap:
+/// `[width u32][height u32][x i32][y i32]` + RGBA. The settings window steps
+/// aside for it.
+#[tauri::command]
+async fn screenshot_monitor(app: AppHandle, index: usize) -> Result<tauri::ipc::Response, String> {
+    let monitors = app.available_monitors().map_err(|e| e.to_string())?;
+    let (x, y, w, h) = monitor_rect(monitors.get(index).ok_or("no such monitor")?);
+    let settings = app.get_webview_window(SETTINGS);
+    if let Some(win) = &settings {
+        let _ = win.hide();
+    }
+    std::thread::sleep(Duration::from_millis(350));
+    let shot = radar_vision::capture::grab_once(radar_vision::ScreenRect {
+        x,
+        y,
+        width: w,
+        height: h,
+    });
+    if let Some(win) = &settings {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+    let mut px = shot.map_err(|e| e.to_string())?;
+    radar_vision::capture::bgrx_to_rgba(&mut px);
+    let mut out = Vec::with_capacity(16 + px.len());
+    out.extend(w.to_le_bytes());
+    out.extend(h.to_le_bytes());
+    out.extend(x.to_le_bytes());
+    out.extend(y.to_le_bytes());
+    out.extend(px);
+    Ok(tauri::ipc::Response::new(out))
 }
 
 fn mark(app: &AppHandle, state: &AppState, kind: &str) -> Result<usize, String> {
@@ -475,6 +808,7 @@ pub fn run() {
                     settings: loaded.settings,
                     engine: started.engine,
                     capture: started.capture,
+                    minimap: started.minimap,
                 }),
                 store,
                 paths,
@@ -486,6 +820,7 @@ pub fn run() {
                 }
             }
             create_radar_window(&handle, &settings)?;
+            sync_guide_window(&handle, &settings);
             if loaded.first_run {
                 show_settings_window(&handle)?;
             }
@@ -497,8 +832,15 @@ pub fn run() {
                 if let tauri::WindowEvent::Destroyed = event {
                     let app = window.app_handle();
                     if let Some(state) = app.try_state::<AppState>() {
-                        if let Some(engine) = state.lock().engine.take() {
+                        let (engine, minimap) = {
+                            let mut inner = state.lock();
+                            (inner.engine.take(), inner.minimap.take())
+                        };
+                        if let Some(engine) = engine {
                             engine.stop();
+                        }
+                        if let Some(m) = minimap {
+                            m.stop();
                         }
                     }
                     app.exit(0);
@@ -515,7 +857,14 @@ pub fn run() {
             get_capture_status,
             add_capture_marker,
             get_recordings_dir,
-            read_sound_file
+            read_sound_file,
+            get_minimap_status,
+            get_minimap_view,
+            minimap_frame,
+            list_monitors,
+            default_minimap_region,
+            screenshot_monitor,
+            create_desktop_shortcut
         ])
         .run(tauri::generate_context!())
         .expect("error while running the radar");

@@ -10,9 +10,15 @@ import {
   type CaptureDevice,
   type CaptureStatus,
   type DebugReport,
+  type MinimapFrame,
+  type MinimapView,
+  type MonitorInfo,
   type RadarFrame,
   type RadarSettings,
+  type ScreenRegion,
+  type Screenshot,
   type SettingsUpdate,
+  type VisionStatus,
 } from "./types";
 
 export interface Backend {
@@ -30,6 +36,49 @@ export interface Backend {
   getRecordingsDir(): Promise<string>;
   onMarker(cb: (message: string) => void): Promise<UnlistenFn>;
   readSoundFile(path: string): Promise<ArrayBuffer>;
+  getMinimapStatus(): Promise<VisionStatus | null>;
+  getMinimapView(): Promise<MinimapView | null>;
+  /** The latest minimap picture if newer than `after`, else null. */
+  minimapFrame(after: number): Promise<MinimapFrame | null>;
+  listMonitors(): Promise<MonitorInfo[]>;
+  defaultMinimapRegion(index: number): Promise<ScreenRegion>;
+  screenshotMonitor(index: number): Promise<Screenshot>;
+  /** Puts a shortcut to the app on the desktop; returns its path. */
+  createDesktopShortcut(): Promise<string>;
+}
+
+/** Layout written by `minimap::Shared::frame_after` in the Rust shell. */
+export function parseMinimapFrame(buf: ArrayBuffer): MinimapFrame | null {
+  if (buf.byteLength < 32) return null;
+  const v = new DataView(buf);
+  const seq = v.getUint32(0, true) + v.getUint32(4, true) * 2 ** 32;
+  const w = v.getUint32(8, true);
+  const h = v.getUint32(12, true);
+  if (buf.byteLength < 32 + w * h * 4) return null;
+  return {
+    seq,
+    w,
+    h,
+    pivotX: v.getFloat32(16, true),
+    pivotY: v.getFloat32(20, true),
+    pxPerM: v.getFloat32(24, true),
+    calibrated: v.getUint32(28, true) !== 0,
+    rgba: new Uint8ClampedArray(buf, 32, w * h * 4),
+  };
+}
+
+/** Layout written by `screenshot_monitor`. */
+export function parseScreenshot(buf: ArrayBuffer): Screenshot {
+  const v = new DataView(buf);
+  const w = v.getUint32(0, true);
+  const h = v.getUint32(4, true);
+  return {
+    w,
+    h,
+    x: v.getInt32(8, true),
+    y: v.getInt32(12, true),
+    rgba: new Uint8ClampedArray(buf, 16, w * h * 4),
+  };
 }
 
 export const FRAME_EVENT = "radar-frame";
@@ -55,6 +104,13 @@ const tauriBackend: Backend = {
   getRecordingsDir: () => invoke<string>("get_recordings_dir"),
   onMarker: (cb) => listen<string>(MARKER_EVENT, (e) => cb(e.payload)),
   readSoundFile: (path) => invoke<ArrayBuffer>("read_sound_file", { path }),
+  getMinimapStatus: () => invoke<VisionStatus | null>("get_minimap_status"),
+  getMinimapView: () => invoke<MinimapView | null>("get_minimap_view"),
+  minimapFrame: async (after) => parseMinimapFrame(await invoke<ArrayBuffer>("minimap_frame", { after })),
+  listMonitors: () => invoke<MonitorInfo[]>("list_monitors"),
+  defaultMinimapRegion: (index) => invoke<ScreenRegion>("default_minimap_region", { index }),
+  screenshotMonitor: async (index) => parseScreenshot(await invoke<ArrayBuffer>("screenshot_monitor", { index })),
+  createDesktopShortcut: () => invoke<string>("create_desktop_shortcut"),
 };
 
 const PREVIEW_KEY = "aion2-radar-preview-settings";
@@ -97,6 +153,19 @@ function previewBackend(): Backend {
     onMarker: async () => () => {},
     readSoundFile: async () => {
       throw new Error("Sound files can be loaded only in the desktop app.");
+    },
+    getMinimapStatus: async () => null,
+    getMinimapView: async () => null,
+    minimapFrame: async () => null,
+    listMonitors: async () => [],
+    defaultMinimapRegion: async () => {
+      throw new Error("Screen capture runs only in the desktop app.");
+    },
+    screenshotMonitor: async () => {
+      throw new Error("Screen capture runs only in the desktop app.");
+    },
+    createDesktopShortcut: async () => {
+      throw new Error("Shortcuts can be made only in the desktop app.");
     },
     onSettings: async (cb) => {
       listeners.add(cb);

@@ -195,7 +195,13 @@ fn run(
     let mut buf = Vec::new();
     let mut seq = 0u64;
     lock(&shared.status).running = true;
-    log::info!("minimap capture: {}×{} at ({}, {}), {fps}/s", w, h, region.x, region.y);
+    log::info!(
+        "minimap capture: {}×{} at ({}, {}), {fps}/s",
+        w,
+        h,
+        region.x,
+        region.y
+    );
     while !stop.load(Ordering::Relaxed) {
         let started = Instant::now();
         if let Err(e) = grabber.grab(&mut buf) {

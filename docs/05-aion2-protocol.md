@@ -36,6 +36,7 @@ are LEB128.
 | Send range | Cubes arrive about **97–105 m** away (planar) | — | Measured 4 times (B8) |
 | Send range, other objects | Fixed per template, e.g. ≈ 50 m enter / 65 m leave for many `12xxxxx` and 1500004, ≈ 103 / 119 m for 1500000 | — | Medians (B8); used only as starting values, then measured in game |
 | `00 36` body | Server time, unix ms (u64) | — | Seen in every heartbeat of the fixtures (e.g. `b9 38 96 34 a1 01 00 00` = 2026-10-13 09:27 UTC) |
+| Client → server | Encrypted after the handshake (RC4, key via RSA `10 36`/`11 36`); length prefixes readable | — | lunixxx37/aion2-protocol-research `docs/C2S_RESEARCH.md`; all other public tools read only server → client |
 
 ## Checked against real traffic
 
@@ -71,30 +72,16 @@ confirmed by a user in game.
   panel lists learned templates; add them to `aion2-decoder.json` to keep
   them.
 * **Your position** comes from the server only with events (opening your
-  wings, buffs, being attacked, loading screens), as all three projects
-  report. In between:
-  * **Client movement** (`aion2/movement.rs`): the client→server direction
-    of the game connection is framed the same way, if it is readable. Which
-    packet and offset carry the own position is *not documented anywhere*,
-    so nothing is assumed: float triplets in client packets are compared
-    with server-confirmed positions taken at the same moment, and a field is
-    adopted only after it matched at least four different confirmed
-    positions with at least 75 % hits. It is dropped again when the server
-    disagrees five times in a row. If the client traffic is encrypted,
-    nothing is ever adopted.
-  * **Range-edge estimate** (`aion2/edge.rs`): an object spawn (`34 36`)
-    that was not just created (its `created` time against the heartbeat
-    clock) and not part of a loading burst means the object just came
-    within its template's send radius; a removal with reason 01 means it
-    left. The radius per template and edge is the median of distances to
-    server-confirmed positions at the same moment. A Kalman filter (position
-    and velocity) combines these with the server fixes; objects still in
-    range or recently left bound the position. Each server fix is first
-    compared with the estimate; the panel shows the median error, and
-    estimates are not shown while it is above 25 m. Estimates carry their
-    1-sigma uncertainty, which the radar draws as a dashed circle.
-  * The game does not send which way you face; the radar's arrow shows the
-    direction you are moving.
+  wings, buffs, being attacked, loading screens), as all public tools
+  report. In between, the radar follows the in-game minimap read from the
+  screen; see [06-minimap-tracking.md](./06-minimap-tracking.md). Fallback:
+  an estimate from objects entering (`34 36`, not just created) and leaving
+  (`35 36` reason 01) the send range, with radii learned per template.
+* **Client → server traffic is encrypted** (RC4 with a key from an RSA
+  handshake per connection; only the varint length prefixes are readable),
+  according to lunixxx37/aion2-protocol-research. Reading it would need the
+  game's memory, so the radar does not try; its client-movement learner is
+  off by default.
 
 ## After a game patch
 

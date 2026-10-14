@@ -30,11 +30,11 @@ is see-through.*
 > Details, evidence and limits: [docs/05-aion2-protocol.md](docs/05-aion2-protocol.md).
 >
 > The server reports your own position only with events (opening your
-> wings, buffs). In between, the radar **follows you** with an estimate from
-> the objects entering and leaving the server's range around you, checked
-> against every server report and drawn with its uncertainty. Verified for
-> the global client build 25800038; a patch can move opcodes (fixable in a
-> JSON file).
+> wings, buffs). In between, the radar **follows you by reading the game's
+> minimap from the screen** (like a screenshot) and measuring how far it
+> scrolls; the server reports set where you are and the minimap's scale.
+> Verified for the global client build 25800038; a patch can move opcodes
+> (fixable in a JSON file).
 
 ## What it guarantees
 
@@ -63,8 +63,15 @@ the radar.
 * Transparent, borderless, resizable, always-on-top overlay that doesn't
   steal focus from the game. Optional **click-through**.
 * **Separate-window mode**: a normal framed window that does not stay on top.
-* Player marker with the direction you are moving. Cube markers with labels
-  and distances. **Rim arrows** for live cubes beyond range.
+* Player marker with the camera direction (read from the minimap's view
+  cone) or the direction you are moving. Cube markers with labels and
+  distances. **Rim arrows** for live cubes beyond range.
+* **Minimap tracking**: follows you between server reports by reading the
+  in-game minimap from the screen; the live minimap can be drawn behind the
+  radar.
+* **Guide arrows** to the nearest live cube: on a ring around your marker on
+  the radar, and around your character in the game view (turning with the
+  camera).
 * A **map grid fixed to the world** and your **path over the last minute**,
   so the radar moves like a map as you walk. A dashed circle shows how sure
   an estimated position is.
@@ -95,6 +102,12 @@ through Npcap (receive-only, non-promiscuous), like the Aether DPS meter. It
 **never** sends, blocks or modifies packets, injects code, opens or reads the
 game's process or memory, bypasses anti-cheat, or automates input. Recordings
 contain only the game connection.
+
+Minimap tracking copies one small rectangle of the screen (the minimap), the
+way screenshot and streaming tools do (GDI). It does not open the game's
+window or process. While it runs, the radar and the guide arrow exclude
+themselves from screen captures, so they also do not show in your own
+recordings or screenshots.
 
 None of that is a promise about AION 2's terms of service. Another tool's
 author reports that NCSoft support called traffic-reading software a ToS
@@ -172,6 +185,10 @@ Output:
   runtime if it is missing.
 * `target\release\bundle\msi\AION 2 Cube Radar_0.1.0_x64_en-US.msi`
 
+The NSIS installer's last page has a *Create desktop shortcut* box (ticked by
+default). Settings → *Window* → **Create desktop shortcut** makes one at any
+time.
+
 The capture tool: `cargo build --release -p radar-capture` →
 `target\release\radar-capture.exe`.
 
@@ -192,9 +209,9 @@ file is kept as `settings.json.bak` and replaced with defaults.
    *Game connection*, your zone and your character.
 4. Hidden cubes within about 100 m appear on the radar, with a sound. They
    disappear when someone opens them and turn stale when you walk out of range.
-5. Walk around. The radar follows you between server reports (see *Your
-   position* below). If it ever shows "Your position is N s old", open your
-   wings.
+5. Walk around. With minimap tracking (on by default) the radar follows you
+   between server reports; open your wings once more after moving 10 m or
+   so, and the minimap's scale is confirmed (see *Your position* below).
 6. If the radar looks mirrored compared with the minimap, switch *Map north*
    to +Y.
 
@@ -204,20 +221,38 @@ The server sends your position only when something happens to you: opening
 your wings, a buff, being attacked, a loading screen. Between those, the
 radar uses, best first:
 
-1. **Your client's movement reports**, if it can read them. It looks for
-   them by itself, by matching the client's packets against the server's
-   reports. If the client's traffic is encrypted, this never kicks in.
-2. **An estimate from objects around you.** The server adds objects as they
-   come within a fixed distance of you and removes them as they fall behind,
-   with their positions. Each of those says "you are about R from here".
-   The distance R per object type is learned from moments when the server
-   did report your position. Every new server report also checks the
-   estimate; if the checks disagree, estimates are switched off. The capture
-   panel shows how far off the checks were.
+1. **The in-game minimap.** It is north-up and centred on you, so it scrolls
+   as you move. The radar reads it from the screen about 10 times a second
+   and measures the scroll; each server report sets where you are, and the
+   distance between two reports teaches it the minimap's scale. The view
+   cone on the minimap gives the camera direction.
+   * Run the game in **borderless or windowed** mode (exclusive fullscreen
+     shows up black).
+   * The minimap's default spot is found automatically. If you moved or
+     resized it (Edit HUD), use Settings → *Minimap tracking* → **Pick the
+     minimap on screen…**; the preview there shows what is being read.
+   * The status line says what it is doing, for example "Open your wings
+     once so the radar knows where you are" or "Following you (scale
+     confirmed)".
+2. **An estimate from objects around you**, when the minimap is hidden or
+   unclear. The server adds objects as they come within a fixed distance of
+   you and removes them as they fall behind; each says "you are about R from
+   here". R is learned per object type, from the minimap and the server
+   reports.
 
-The first minutes in a new area are the learning phase, which goes faster
-the more often you open your wings or buff yourself. What it learns is saved
-to `aion2-learned.json` in the settings folder and used next time.
+The game encrypts what your client sends, so your own movement packets
+cannot be read (that would need the game's memory, which this app never
+touches). What is learned (minimap scale, object distances) is saved to
+`aion2-learned.json` in the settings folder and used next time. Details:
+[docs/06-minimap-tracking.md](docs/06-minimap-tracking.md).
+
+### Guide arrows
+
+Settings → *Cube guide*. On the radar, an arrow on a small ring around your
+marker points at the nearest live cube, with its distance. Over the game, a
+ring around your character does the same, turned with the camera so that
+"up" is where you look. If it sits too high or low, adjust *Character on
+screen* (fractions of the screen).
 
 ### Cube sound
 
@@ -255,10 +290,13 @@ crates/radar-core/      event model, live-cube tracker, geometry, settings (pure
 crates/radar-ingest/    sources, protocol, adapter, synthetic SRF parser, simulator, pipeline
 crates/radar-capture/   Npcap/libpcap capture, TCP reassembly, AION 2 framing, census,
                         discovery, decoder profiles, capture source; `radar-capture` CLI
+crates/radar-vision/    minimap tracking: screen capture (Windows GDI), map movement,
+                        camera direction
   fixtures/             acceptance.jsonl, malformed.jsonl, synthetic-session.srf.hex
   tests/acceptance.rs   end-to-end acceptance tests
 src-tauri/              Tauri shell: windows, commands, settings file, logging
-src/                    TypeScript: radar.ts, settings.ts, lib/{projection,layout,renderer,bridge}.ts
+src/                    TypeScript: radar.ts, settings.ts, guide.ts, minimapSetup.ts,
+                        lib/{projection,layout,renderer,bridge,guide,mapgrid,sound}.ts
 tools/telemetry_demo.py reference protocol producer (synthetic data)
 docs/                   research, architecture, protocol, data availability
 ```

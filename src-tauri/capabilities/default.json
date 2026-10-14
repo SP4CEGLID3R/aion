@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the radar and settings windows may do",
-  "windows": ["radar", "settings"],
+  "description": "What the radar, settings and guide windows may do",
+  "windows": ["radar", "settings", "guide"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

@@ -1,9 +1,19 @@
 // Canvas drawing. Layout decisions live in layout.ts; this file only paints.
 
+import { formatMetres, nearestLive } from "./guide";
 import { layoutMarkers, type MarkerLayout } from "./layout";
 import { gridSegments, gridStep } from "./mapgrid";
-import { formatDistance, pointAt, projectWorld, screenAngle, type View } from "./projection";
+import { DEG, formatDistance, pointAt, projectWorld, screenAngle, type View } from "./projection";
 import type { CubeView, RadarSettings, WorldPos } from "./types";
+
+/** The live game minimap, drawn under the radar (north-up, player-centred). */
+export interface MinimapBackground {
+  image: CanvasImageSource;
+  pivotX: number;
+  pivotY: number;
+  /** Minimap pixels per metre. */
+  pxPerM: number;
+}
 
 export interface Scene {
   settings: RadarSettings;
@@ -15,6 +25,7 @@ export interface Scene {
   accuracyM?: number | null;
   /** Recent own positions, oldest first. */
   trail?: readonly WorldPos[];
+  background?: MinimapBackground | null;
 }
 
 const FONT = "600 11px system-ui, 'Segoe UI', sans-serif";
@@ -34,6 +45,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
   ctx.arc(view.cx, view.cy, view.radiusPx, 0, Math.PI * 2);
   ctx.fillStyle = withAlpha(c.background, 0.78);
   ctx.fill();
+  if (scene.background && scene.player) drawBackground(ctx, scene, scene.background);
 
   // Range rings with their distances.
   ctx.font = FONT;
@@ -72,7 +84,62 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
   if (scene.player) {
     drawAccuracy(ctx, scene);
     drawPlayer(ctx, scene);
+    if (settings.guide.radarArrow) drawGuide(ctx, scene);
   }
+}
+
+/** The game's own minimap behind everything, at the radar's scale. */
+function drawBackground(ctx: CanvasRenderingContext2D, scene: Scene, bg: MinimapBackground): void {
+  const { view } = scene;
+  if (!(bg.pxPerM > 0)) return;
+  // Radar pixels per minimap pixel.
+  const k = view.radiusPx / view.range / bg.pxPerM;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(view.cx, view.cy, view.radiusPx, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.translate(view.cx, view.cy);
+  // The minimap is north-up; turn it with the radar in heading-up mode.
+  ctx.rotate(-view.upDeg * DEG);
+  ctx.scale(k, k);
+  ctx.globalAlpha = 0.8;
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(bg.image, -bg.pivotX, -bg.pivotY);
+  ctx.restore();
+}
+
+/** An arrow on a ring around the player marker, towards the nearest cube. */
+function drawGuide(ctx: CanvasRenderingContext2D, scene: Scene): void {
+  const { view, settings } = scene;
+  const target = nearestLive(scene.cubes);
+  if (!target || target.bearingDeg === null || target.distance === null) return;
+  const ring = 22;
+  const angle = screenAngle(target.bearingDeg, view);
+  const p = pointAt(angle, ring, view);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(view.cx, view.cy, ring, 0, Math.PI * 2);
+  ctx.setLineDash([3, 4]);
+  ctx.strokeStyle = withAlpha(settings.colors.cube, 0.45);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.translate(p.x, p.y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(0, -9);
+  ctx.lineTo(7, 4);
+  ctx.lineTo(0, 1);
+  ctx.lineTo(-7, 4);
+  ctx.closePath();
+  ctx.fillStyle = settings.colors.cube;
+  ctx.strokeStyle = "rgba(0,0,0,0.75)";
+  ctx.lineWidth = 1.5;
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+  const tp = pointAt(angle, ring + 18, view);
+  label(ctx, formatMetres(target.distance), tp.x, tp.y, settings.colors.cube, "center");
 }
 
 /** Markers only, on a clear background, for laying over the game's minimap. */
@@ -86,7 +153,10 @@ function drawMinimapScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
   ctx.stroke();
   const markers = layoutMarkers(scene.cubes, scene.player, view, settings);
   for (const m of markers) drawMarker(ctx, m, settings, width);
-  if (scene.player) drawAccuracy(ctx, scene);
+  if (scene.player) {
+    drawAccuracy(ctx, scene);
+    if (settings.guide.radarArrow) drawGuide(ctx, scene);
+  }
 }
 
 /** World-fixed grid lines, clipped to the disc: they slide as you move. */

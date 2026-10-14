@@ -195,3 +195,90 @@ a {
 #capture .actions {
   margin: 8px 0;
 }
+
+.minimap-box {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin: 8px 0;
+}
+
+#minimap-preview {
+  width: 233px;
+  height: 155px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0b1220;
+  flex: none;
+}
+
+.minimap-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.status-text {
+  margin-bottom: 6px;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+
+#picker {
+  width: min(1100px, 96vw);
+  max-height: 94vh;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+#picker::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.picker-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.picker-body {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+#picker-canvas {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  background: #0b1220;
+  border-radius: 6px;
+  cursor: crosshair;
+}
+
+.picker-side {
+  width: 240px;
+  flex: none;
+}
+
+#picker-zoom {
+  width: 240px;
+  height: 159px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0b1220;
+}
+
+@media (max-width: 700px) {
+  .minimap-box,
+  .picker-body {
+    flex-direction: column;
+  }
+}

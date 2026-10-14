@@ -45,6 +45,43 @@
           <label class="check"><input name="showTrail" type="checkbox" /> Your path over the last minute</label>
         </fieldset>
 
+        <fieldset id="minimap-section">
+          <legend>Minimap tracking</legend>
+          <p class="hint">
+            Follows you between the server's position reports by reading the game's minimap (top right) from the
+            screen, like a screenshot: nothing touches the game. Run the game in <strong>borderless or windowed</strong>
+            mode. After logging in, open your wings once; open them again after moving 10 m or more and the minimap's
+            scale is confirmed.
+          </p>
+          <label class="check"><input name="minimap.enabled" type="checkbox" /> Follow me with the in-game minimap</label>
+          <label class="check"><input name="minimap.background" type="checkbox" /> Show the live minimap behind the radar</label>
+          <label>Readings per second <input name="minimap.fps" type="number" min="4" max="20" step="1" /></label>
+          <div class="minimap-box">
+            <canvas id="minimap-preview" width="311" height="206" aria-label="What the radar reads from the screen"></canvas>
+            <div class="minimap-info">
+              <div id="minimap-status" class="status-text">—</div>
+              <div id="minimap-region-text" class="hint"></div>
+              <div class="actions">
+                <button type="button" id="minimap-pick">Pick the minimap on screen…</button>
+                <button type="button" id="minimap-default" class="secondary">Use the default spot</button>
+              </div>
+            </div>
+          </div>
+          <p class="hint">
+            While minimap tracking is on, the radar and the guide arrow are hidden from screenshots and recordings, so
+            they can sit over the minimap without disturbing it.
+          </p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Cube guide</legend>
+          <label class="check"><input name="guide.radarArrow" type="checkbox" /> Arrow around my marker on the radar, pointing at the nearest cube</label>
+          <label class="check"><input name="guide.screenArrow" type="checkbox" /> Arrow around my character in the game view (turns with the camera; needs minimap tracking)</label>
+          <label>Character on screen, across (0 = left, 1 = right) <input name="guide.screenX" type="number" min="0" max="1" step="0.01" /></label>
+          <label>Character on screen, down (0 = top, 1 = bottom) <input name="guide.screenY" type="number" min="0" max="1" step="0.01" /></label>
+          <label>Arrow ring width (px) <input name="guide.screenSize" type="number" min="80" max="1200" step="10" /></label>
+        </fieldset>
+
         <fieldset>
           <legend>Cube alert</legend>
           <label class="check"><input name="alertSound.enabled" type="checkbox" /> Play a sound when a new cube appears on the radar</label>
@@ -82,6 +119,10 @@
 
         <fieldset>
           <legend>Window</legend>
+          <div class="actions">
+            <button type="button" id="desktop-shortcut" class="secondary">Create desktop shortcut</button>
+            <span id="desktop-shortcut-result" class="hint"></span>
+          </div>
           <label>Mode
             <select name="windowMode">
               <option value="overlay">Overlay — transparent, always on top</option>
@@ -191,6 +232,33 @@
         <table id="debug-history"><thead><tr><th>time</th><th>event</th><th>id</th><th>provenance</th><th>outcome</th></tr></thead><tbody></tbody></table>
       </section>
     </main>
+    <dialog id="picker">
+      <div class="picker-head">
+        <strong>Pick the minimap</strong>
+        <select id="picker-monitor" aria-label="Monitor"></select>
+        <label class="check"><input id="picker-delay" type="checkbox" checked /> in 3 s</label>
+        <button type="button" id="picker-shot">Take screenshot</button>
+        <span id="picker-count" class="hint"></span>
+      </div>
+      <p class="hint">
+        Take a screenshot with the game showing, then drag a box over the minimap's <strong>map area</strong> (below its
+        title bar), so that the cross sits on your arrow. The close-up on the right shows exactly what will be read.
+      </p>
+      <div class="picker-body">
+        <canvas id="picker-canvas"></canvas>
+        <div class="picker-side">
+          <canvas id="picker-zoom" width="311" height="206"></canvas>
+          <label>X <input id="picker-x" type="number" step="1" /></label>
+          <label>Y <input id="picker-y" type="number" step="1" /></label>
+          <label>Width <input id="picker-w" type="number" min="40" max="2000" step="1" /></label>
+          <label>Height <input id="picker-h" type="number" min="40" max="2000" step="1" /></label>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="button" id="picker-use">Use this area</button>
+        <button type="button" id="picker-cancel" class="secondary">Cancel</button>
+      </div>
+    </dialog>
     <script type="module" src="/src/settings.ts"></script>
   </body>
 </html>

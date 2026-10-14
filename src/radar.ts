@@ -4,7 +4,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { backend } from "./lib/bridge";
 import { lerp, lerpAngleDeg, viewUpDeg, type View } from "./lib/projection";
-import { drawScene } from "./lib/renderer";
+import { drawScene, type MinimapBackground } from "./lib/renderer";
 import { AlertGate, playAlert } from "./lib/sound";
 import { DEFAULT_SETTINGS, type RadarFrame, type RadarSettings, type WorldPos } from "./lib/types";
 
@@ -23,6 +23,45 @@ let prev: { frame: RadarFrame; at: number } | null = null;
 let cur: { frame: RadarFrame; at: number } | null = null;
 let size = { w: 0, h: 0, dpr: 1 };
 const alertGate = new AlertGate();
+
+// The live game minimap, drawn behind the radar.
+let background: MinimapBackground | null = null;
+let backgroundSeq = 0;
+let backgroundAt = 0;
+let backgroundBusy = false;
+let backgroundCanvas: HTMLCanvasElement | null = null;
+
+async function pollMinimap(): Promise<void> {
+  const wanted =
+    !backend.isPreview && settings.minimap.enabled && settings.minimap.background && settings.style === "radar";
+  if (!wanted) {
+    background = null;
+    return;
+  }
+  // Never draw a picture that stopped updating.
+  if (background && performance.now() - backgroundAt > 2000) background = null;
+  if (backgroundBusy) return;
+  backgroundBusy = true;
+  try {
+    const f = await backend.minimapFrame(backgroundSeq);
+    if (f) {
+      backgroundSeq = f.seq;
+      backgroundCanvas ??= document.createElement("canvas");
+      if (backgroundCanvas.width !== f.w || backgroundCanvas.height !== f.h) {
+        backgroundCanvas.width = f.w;
+        backgroundCanvas.height = f.h;
+      }
+      backgroundCanvas.getContext("2d")!.putImageData(new ImageData(f.rgba, f.w, f.h), 0, 0);
+      background =
+        f.pxPerM > 0 ? { image: backgroundCanvas, pivotX: f.pivotX, pivotY: f.pivotY, pxPerM: f.pxPerM } : null;
+      backgroundAt = performance.now();
+    }
+  } catch (e) {
+    console.error("minimap frame", e);
+  } finally {
+    backgroundBusy = false;
+  }
+}
 
 /** Own positions of the last minute, for the trail. */
 const TRAIL_MS = 60_000;
@@ -116,6 +155,7 @@ function render(): void {
       view,
       accuracyM: backendSilent ? null : (frame?.player?.accuracyM ?? null),
       trail: trail.map((t) => t.pos).concat(pose.pos ? [pose.pos] : []),
+      background: backendSilent ? null : background,
     },
     size.w,
     size.h,
@@ -148,7 +188,7 @@ function updateStatus(frame: RadarFrame): void {
     `${frame.stats.spawned} live`,
     frame.stats.stale ? `${frame.stats.stale} stale` : null,
     frame.zone ? `zone ${frame.zone}` : null,
-    frame.player?.accuracyM ? `position estimated ±${Math.max(1, Math.round(frame.player.accuracyM))} m` : null,
+    frame.player?.accuracyM ? `position ±${Math.max(1, Math.round(frame.player.accuracyM))} m` : null,
     src ? `${src.name} (${src.state})` : null,
   ].filter(Boolean);
   const text = parts.join(" · ");
@@ -201,6 +241,7 @@ async function main(): Promise<void> {
       .catch((err) => console.error(err));
   });
 
+  window.setInterval(() => void pollMinimap(), 100);
   requestAnimationFrame(render);
 }
 
