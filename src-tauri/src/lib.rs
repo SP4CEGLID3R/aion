@@ -30,11 +30,6 @@ const SETTINGS: &str = "settings";
 const FRAME_EVENT: &str = "radar-frame";
 const SETTINGS_EVENT: &str = "settings-changed";
 const MARKER_EVENT: &str = "capture-marker";
-/// WebView2 defaults (kept, see wry) plus autoplay, so the cube alert can
-/// sound without a click in the radar first. Both windows must use the same
-/// arguments, as they share a data directory.
-const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
-                            --autoplay-policy=no-user-gesture-required";
 /// Largest sound file the alert will load.
 const MAX_SOUND_BYTES: u64 = 10 * 1024 * 1024;
 
@@ -258,7 +253,6 @@ fn create_radar_window(app: &AppHandle, s: &RadarSettings) -> tauri::Result<Webv
         .shadow(!overlay)
         // Do not take the keyboard from the game when the overlay appears.
         .focused(false)
-        .additional_browser_args(BROWSER_ARGS)
         .build()?;
     apply_window_mode(&window, s);
     Ok(window)
@@ -274,7 +268,6 @@ fn show_settings_window(app: &AppHandle) -> tauri::Result<()> {
         .title("Cube Radar — Settings")
         .inner_size(720.0, 760.0)
         .min_inner_size(420.0, 360.0)
-        .additional_browser_args(BROWSER_ARGS)
         .build()?;
     Ok(())
 }
@@ -331,8 +324,10 @@ fn get_debug_report(state: State<'_, AppState>) -> Option<DebugReport> {
     state.lock().engine.as_ref().map(Engine::debug_report)
 }
 
+/// Async on purpose: creating a window from a synchronous command deadlocks
+/// on Windows (WebView2 waits for the main thread the command is blocking).
 #[tauri::command]
-fn open_settings_window(app: AppHandle) -> Result<(), String> {
+async fn open_settings_window(app: AppHandle) -> Result<(), String> {
     show_settings_window(&app).map_err(|e| e.to_string())
 }
 

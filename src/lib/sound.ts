@@ -11,7 +11,7 @@ let lastError: string | null = null;
 
 function audio(): AudioContext {
   ctx ??= new AudioContext();
-  // Autoplay is allowed by the app's WebView arguments; resume just in case.
+  // The app's WebView2 allows autoplay (wry's default); resume just in case.
   if (ctx.state === "suspended") void ctx.resume();
   return ctx;
 }
