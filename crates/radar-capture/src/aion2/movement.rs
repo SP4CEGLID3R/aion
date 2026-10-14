@@ -272,6 +272,14 @@ impl MovementLearner {
         }
     }
 
+    /// The field found by learning (not a pinned one), to keep.
+    pub fn learned_source(&self) -> Option<MoveSource> {
+        if self.pinned {
+            return None;
+        }
+        self.source.map(Key::to_source)
+    }
+
     pub fn status(&self) -> MovementStatus {
         MovementStatus {
             state: match (self.source, self.enabled) {

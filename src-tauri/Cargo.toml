@@ -19,6 +19,7 @@ tauri-plugin-global-shortcut = "2"
 radar-core = { path = "../crates/radar-core" }
 radar-ingest = { path = "../crates/radar-ingest" }
 radar-capture = { path = "../crates/radar-capture" }
+radar-vision = { path = "../crates/radar-vision" }
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true

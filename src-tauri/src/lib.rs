@@ -141,6 +141,7 @@ fn capture_source(
         decoder,
         record_dir: record.then(|| paths.recordings.clone()),
         learned_path: Some(paths.config_dir.join(LEARNED_FILE)),
+        minimap: None, // wired up in the next step
     });
     Some((Box::new(source), status))
 }

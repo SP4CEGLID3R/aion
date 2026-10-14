@@ -19,6 +19,7 @@ use crate::aion2::{Aion2Config, Aion2Decoder, Aion2Status};
 use crate::census::{Census, OpcodeRow};
 use crate::discovery::{append_marker, Marker};
 use crate::live::{Next, PcapApi};
+use crate::minimap::MinimapLink;
 use crate::net::{self, linktype};
 use crate::pcapfile::{self, PcapWriter};
 use crate::profile::{Decoder, DecoderProfile};
@@ -57,6 +58,8 @@ pub struct CaptureConfig {
     /// Keep what the AION 2 decoder learns (send radii, the movement field)
     /// in this JSON file for the next session.
     pub learned_path: Option<PathBuf>,
+    /// Minimap measurements from the screen reader, if it runs.
+    pub minimap: Option<Arc<MinimapLink>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -133,6 +136,7 @@ struct Pipeline {
     packets: u64,
     learned_path: Option<PathBuf>,
     learned_saved: Option<crate::aion2::Aion2Learned>,
+    minimap: Option<Arc<MinimapLink>>,
 }
 
 /// Raw packets (capture time, IP bytes) held back per flow direction.
@@ -247,6 +251,7 @@ impl Pipeline {
         Ok(Pipeline {
             learned_path: cfg.learned_path.clone(),
             learned_saved: None,
+            minimap: cfg.minimap.clone(),
             streams: GameStreams::new(),
             census: Census::new(),
             decoder,
@@ -319,6 +324,23 @@ impl Pipeline {
         if let Decoding::Aion2(d) = &mut self.decoder {
             out.extend(d.tick(t_out));
         }
+        self.send(out, emit)
+    }
+
+    /// Minimap measurements queued by the screen reader.
+    fn minimap(&mut self, emit: &mut Emit<'_>) -> bool {
+        let Some(link) = self.minimap.clone() else {
+            return true;
+        };
+        let samples = link.drain();
+        let Decoding::Aion2(d) = &mut self.decoder else {
+            return true;
+        };
+        let mut out = Vec::new();
+        for s in &samples {
+            out.extend(d.on_minimap(s));
+        }
+        link.set_view(d.minimap_view());
         self.send(out, emit)
     }
 
@@ -481,6 +503,9 @@ impl CaptureSource {
                         }
                     }
                 }
+            }
+            if !pipe.minimap(emit) {
+                return Ok(());
             }
             if !pipe.tick(now_ms(), emit) {
                 return Ok(());

@@ -451,3 +451,97 @@ fn learned_radii_and_movement_are_kept_for_the_next_session() {
         learned
     );
 }
+
+fn minimap_sample(t: Millis, x: f64, y: f64) -> crate::minimap::MinimapSample {
+    crate::minimap::MinimapSample {
+        t,
+        x,
+        y,
+        seg: 0,
+        good: true,
+        brk: false,
+        black: false,
+        frozen: false,
+        peak: 0.9,
+        roundness: 0.5,
+        ridge: 0.065,
+        cone: Some(90.0), // camera looking east on the (north-up) minimap
+        cone_strength: 0.7,
+        ring_r: None,
+        ui_scale: 1.0,
+    }
+}
+
+#[test]
+fn the_minimap_moves_the_player_between_server_fixes() {
+    let mut d = identified(9180);
+    // Minimap frames every 100 ms; the player walks east at 5 m/s:
+    // 500 units/s × 0.0103 px/unit ≈ 5.15 px/s on the minimap (+x).
+    let k = minimap::SEED_K;
+    let mut player_events = Vec::new();
+    for i in 0..60i64 {
+        let t = 1_000 + i * 100;
+        let me = east(t);
+        let px = (me[0] - ME[0]) as f64 * k;
+        for e in d.on_minimap(&minimap_sample(t, 10.0 + px, 20.0)) {
+            player_events.push((t, e));
+        }
+        if i == 2 {
+            // One wing opening anchors the track.
+            let ev = d.on_frame(&f([0x2a, 0x38], buff_a_body(9180, east(t + 50))), t + 50);
+            assert!(matches!(ev[..], [WireEvent::Player { .. }]));
+        }
+    }
+    let st = d.status(7_000);
+    assert_eq!(st.minimap.state, "tracking", "{:?}", st.minimap);
+    assert_eq!(st.position_source, "minimap");
+    // Positions follow the walk, carry an accuracy and the camera heading.
+    let (t, last) = player_events.last().unwrap();
+    let WireEvent::Player {
+        pos,
+        heading,
+        accuracy,
+        ..
+    } = last
+    else {
+        panic!("{last:?}")
+    };
+    let truth = d.to_world(east(*t));
+    assert!(
+        (pos[0] - truth[0]).abs() < 0.5 && (pos[1] - truth[1]).abs() < 0.5,
+        "{pos:?} vs {truth:?}"
+    );
+    assert!(accuracy.is_some_and(|a| a < 5.0), "{accuracy:?}");
+    assert_eq!(*heading, Some(90.0));
+    // Never back in time.
+    let ts: Vec<Millis> = player_events
+        .iter()
+        .map(|(_, e)| match e {
+            WireEvent::Player { t, .. } => *t,
+            _ => 0,
+        })
+        .collect();
+    assert!(ts.windows(2).all(|w| w[0] <= w[1]), "{ts:?}");
+}
+
+#[test]
+fn minimap_calibration_is_kept_for_the_next_session() {
+    let mut d = identified(9180);
+    let k = minimap::SEED_K;
+    // Fixes every 3 s while walking east: legs calibrate the scale.
+    for i in 0..400i64 {
+        let t = 1_000 + i * 100;
+        let px = (east(t)[0] - ME[0]) as f64 * k;
+        d.on_minimap(&minimap_sample(t, px, 0.0));
+        if i % 30 == 5 {
+            d.on_frame(&f([0x2a, 0x38], buff_a_body(9180, east(t + 50))), t + 50);
+        }
+    }
+    let learned = d.learned();
+    let cal = learned.minimap.clone().expect("calibrated");
+    assert!(cal.legs >= 3, "{cal:?}");
+    assert!((cal.k / k - 1.0).abs() < 0.02, "{cal:?}");
+    let mut cfg = Aion2Config::builtin();
+    cfg.apply_learned(&learned);
+    assert_eq!(cfg.minimap_hint, Some(cal));
+}

@@ -1,0 +1,21 @@
+[package]
+name = "radar-vision"
+description = "Reads the AION 2 minimap from the screen: map movement (visual odometry) and camera direction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustfft = "6"
+log.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+png = "0.17"

@@ -25,6 +25,7 @@ pub mod census;
 pub mod discovery;
 pub mod framing;
 pub mod live;
+pub mod minimap;
 pub mod net;
 pub mod pcapfile;
 pub mod profile;

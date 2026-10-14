@@ -35,11 +35,15 @@
 //! * **Player position**: the server reports it only with events (own
 //!   buffs, opening the wings, being attacked, map loads). In between, the
 //!   radar follows you with whichever of these works, best first:
-//!   1. the client's own movement reports, once `movement` has learned
-//!      where they carry the position (only if that traffic is readable);
+//!   1. the in-game minimap read from the screen (`minimap`): last fix plus
+//!      how far the minimap has scrolled since, its scale learned from the
+//!      fixes;
 //!   2. an estimate from objects entering and leaving the send range
 //!      (`edge`), checked against every server fix and shown with its
 //!      uncertainty.
+//!
+//!   The client's own movement reports (`movement`) would be best, but the
+//!   global client encrypts what it sends, so that learner is off by default.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
@@ -51,10 +55,14 @@ use crate::discovery::read_varint;
 use crate::framing::Frame;
 
 mod edge;
+mod minimap;
 mod movement;
 
 pub use edge::{Edge, EdgeEstimator, EstimateStatus, RadiusSeed};
+pub use minimap::{LocKind, MinimapCalibration, MinimapFusion, MinimapStatus};
 pub use movement::{Anchor, MoveSource, MovementLearner, MovementStatus};
+
+use crate::minimap::{MinimapSample, MinimapView};
 
 pub const DEFAULT_CONFIG_JSON: &str = include_str!("aion2-default.json");
 
@@ -127,7 +135,10 @@ pub struct Aion2Config {
     pub seen_interval_ms: Millis,
     pub stream_timeout_ms: Millis,
     /// Learn which client packet carries the own movement (see `movement`).
-    #[serde(default = "yes")]
+    /// Off by default: the global client encrypts its traffic (the length
+    /// prefixes are readable, the contents are not), so there is nothing to
+    /// find there.
+    #[serde(default)]
     pub learn_movement: bool,
     /// A known client movement field, used right away instead of learning.
     #[serde(default)]
@@ -144,6 +155,13 @@ pub struct Aion2Config {
     /// dropped like any learned one if the server disagrees.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub movement_hint: Option<MoveSource>,
+    /// Minimap calibration from an earlier session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimap_hint: Option<MinimapCalibration>,
+    /// Radii measured in earlier sessions (kept apart from the seeds so only
+    /// measurements are saved again).
+    #[serde(skip)]
+    pub learned_radii: BTreeMap<String, RadiusSeed>,
 }
 
 /// What the decoder learned in game, kept for the next session.
@@ -154,11 +172,13 @@ pub struct Aion2Learned {
     pub object_radii: BTreeMap<String, RadiusSeed>,
     #[serde(default)]
     pub own_movement: Option<MoveSource>,
+    #[serde(default)]
+    pub minimap: Option<MinimapCalibration>,
 }
 
 impl Aion2Learned {
     pub fn is_empty(&self) -> bool {
-        self.object_radii.is_empty() && self.own_movement.is_none()
+        self.object_radii.is_empty() && self.own_movement.is_none() && self.minimap.is_none()
     }
 }
 
@@ -179,8 +199,12 @@ impl Aion2Config {
             e.enter = r.enter.or(e.enter);
             e.leave = r.leave.or(e.leave);
         }
+        self.learned_radii = learned.object_radii.clone();
         if self.own_movement.is_none() {
             self.movement_hint = learned.own_movement.clone();
+        }
+        if learned.minimap.is_some() {
+            self.minimap_hint = learned.minimap.clone();
         }
     }
 
@@ -419,10 +443,11 @@ pub struct Aion2Status {
     pub objects_tracked: usize,
     pub last_object_spawn_ms: Option<Millis>,
     pub learned_templates: Vec<u32>,
-    /// Where the radar's own position comes from right now: "client"
-    /// (movement reports), "server" (an event), "estimate" or "none".
+    /// Where the radar's own position comes from right now: "minimap",
+    /// "server" (an event), "estimate", "client" or "none".
     pub position_source: String,
     pub position_age_ms: Option<Millis>,
+    pub minimap: MinimapStatus,
     pub movement: MovementStatus,
     pub estimate: EstimateStatus,
     pub warnings: Vec<String>,
@@ -432,6 +457,7 @@ pub struct Aion2Status {
 enum PosSource {
     Client,
     Server,
+    Minimap,
     Estimate,
 }
 
@@ -463,10 +489,14 @@ pub struct Aion2Decoder {
     last_pos: Option<([f32; 3], Millis, PosSource)>,
     last_client_t: Option<Millis>,
     last_estimate_t: Millis,
+    minimap: MinimapFusion,
+    last_minimap_t: Option<Millis>,
 }
 
 /// Client movement reports newer than this win over estimates.
 const CLIENT_FRESH_MS: Millis = 1_500;
+/// Minimap positions newer than this win over estimates.
+const MINIMAP_FRESH_MS: Millis = 1_500;
 /// Estimates are moved forward this often between events.
 const ESTIMATE_EVERY_MS: Millis = 250;
 
@@ -505,6 +535,8 @@ impl Aion2Decoder {
                 cfg.movement_hint.as_ref(),
             ),
             edge: EdgeEstimator::new(&cfg.object_radii),
+            minimap: MinimapFusion::new(cfg.units_per_meter, cfg.minimap_hint.as_ref()),
+            last_minimap_t: None,
             cfg,
             server_clock: None,
             last_t: 0,
@@ -551,28 +583,88 @@ impl Aion2Decoder {
         self.live.clear();
         self.movement.on_new_connection();
         self.edge.on_new_connection(self.last_t);
+        self.minimap.on_new_connection();
         self.last_pos = None;
         self.last_client_t = None;
+        self.last_minimap_t = None;
+        self.last_estimate_t = 0;
     }
 
     /// What was learned in game (with earlier sessions' results), to keep
     /// for the next session.
     pub fn learned(&self) -> Aion2Learned {
-        let mut object_radii = self.cfg.object_radii.clone();
+        // Only measurements are kept (earlier sessions' and this one's);
+        // seeds from the configuration stay in the configuration.
+        let mut object_radii = self.cfg.learned_radii.clone();
         for (k, r) in self.edge.learned_radii() {
             let e = object_radii.entry(k).or_default();
             e.enter = r.enter.or(e.enter);
             e.leave = r.leave.or(e.leave);
         }
-        // Only measured values are kept; the built-in seeds stay built in.
-        static BUILTIN: std::sync::OnceLock<BTreeMap<String, RadiusSeed>> =
-            std::sync::OnceLock::new();
-        let builtin = BUILTIN.get_or_init(|| Aion2Config::builtin().object_radii);
-        object_radii.retain(|k, r| builtin.get(k) != Some(r));
+        let minimap = if self.minimap.calibration().legs > 0 {
+            Some(self.minimap.calibration())
+        } else {
+            self.cfg.minimap_hint.clone()
+        };
         Aion2Learned {
             object_radii,
-            own_movement: self.movement.status().source,
+            own_movement: self.movement.learned_source(),
+            minimap,
         }
+    }
+
+    /// The minimap scale for drawing it, and the tracking state.
+    pub fn minimap_view(&self) -> MinimapView {
+        let st = self.minimap.status(self.last_t);
+        MinimapView {
+            px_per_m: st.px_per_m,
+            calibrated: self.minimap.calibrated(),
+            state: st.state,
+            reason: st.reason,
+            camera_deg: self.camera_heading(self.last_t),
+            legs: st.legs,
+        }
+    }
+
+    fn minimap_fresh(&self, t: Millis) -> bool {
+        self.last_minimap_t
+            .is_some_and(|m| t - m <= MINIMAP_FRESH_MS)
+    }
+
+    /// One minimap measurement from the screen tracker.
+    pub fn on_minimap(&mut self, s: &MinimapSample) -> Vec<WireEvent> {
+        let mut out = Vec::new();
+        self.last_t = self.last_t.max(s.t);
+        self.minimap.on_frame(s);
+        let loc = self.minimap.locate(s.t);
+        let (LocKind::Live, Some(p)) = (loc.kind, loc.pos) else {
+            return out;
+        };
+        if loc.reason == "fresh fix" {
+            return out; // the fix itself was already shown
+        }
+        // Dense truth: lets the range estimator learn object radii.
+        self.edge.on_truth(p, s.t, loc.sigma, false);
+        if self.last_pos.is_none_or(|(_, lt, _)| s.t >= lt) {
+            let heading = self.camera_heading(s.t);
+            self.emit_player_as(
+                p,
+                s.t,
+                &mut out,
+                PosSource::Minimap,
+                Some(loc.sigma),
+                heading,
+            );
+            self.last_minimap_t = Some(s.t);
+        }
+        out
+    }
+
+    /// Camera direction (compass) from the minimap's view cone.
+    fn camera_heading(&self, t: Millis) -> Option<f64> {
+        let deg = self.minimap.camera(t)?;
+        let (dx, dy) = self.minimap.screen_dir_to_world(deg);
+        Some(self.heading_of(dx, dy))
     }
 
     /// Bytes were lost: a removal may have been missed, so no cube can be
@@ -605,6 +697,7 @@ impl Aion2Decoder {
         let mut out = Vec::new();
         if !self.cfg.estimate_position
             || self.client_fresh(t)
+            || self.minimap_fresh(t)
             || t - self.last_estimate_t < ESTIMATE_EVERY_MS
             || self.last_pos.is_some_and(|(_, lt, _)| t <= lt)
         {
@@ -859,7 +952,7 @@ impl Aion2Decoder {
         self.self_id = Some(id);
         if let Some(&(p, t)) = self.last_fix_by_entity.get(&id) {
             if now - t < 60_000 && self.last_pos.is_none_or(|(_, lt, _)| t >= lt) {
-                self.server_fix(p, t, out);
+                self.server_fix(p, t, false, out);
             }
         }
     }
@@ -874,7 +967,7 @@ impl Aion2Decoder {
         }
         self.last_fix_by_entity.insert(entity, (p, t));
         if self.self_id == Some(entity) {
-            self.server_fix(p, t, out);
+            self.server_fix(p, t, false, out);
         }
     }
 
@@ -883,15 +976,20 @@ impl Aion2Decoder {
         if let Some(id) = self.self_id {
             self.last_fix_by_entity.insert(id, (p, t));
         }
-        self.server_fix(p, t, out);
+        self.server_fix(p, t, true, out);
     }
 
-    /// The server told us where we are.
-    fn server_fix(&mut self, p: [f32; 3], t: Millis, out: &mut Vec<WireEvent>) {
+    /// The server told us where we are (`zone`: a map load or teleport).
+    fn server_fix(&mut self, p: [f32; 3], t: Millis, zone: bool, out: &mut Vec<WireEvent>) {
         self.self_fix_t = Some(t);
         self.movement.on_server_fix(p, t);
+        self.minimap.on_fix(t, p, zone);
         self.edge.on_truth(p, t, 150.0, true);
-        self.emit_player(p, t, out, PosSource::Server, None);
+        // Never step back in time: a newer minimap position was already shown.
+        if self.last_pos.is_none_or(|(_, lt, _)| t >= lt) {
+            let heading = self.camera_heading(t);
+            self.emit_player_as(p, t, out, PosSource::Server, None, heading);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -907,7 +1005,10 @@ impl Aion2Decoder {
     ) {
         let est = self.edge.on_edge(id, template, q, edge, created_age, t);
         if let Some((p, sigma, v)) = est {
-            if !self.client_fresh(t) && self.last_pos.is_none_or(|(_, lt, _)| t >= lt) {
+            if !self.client_fresh(t)
+                && !self.minimap_fresh(t)
+                && self.last_pos.is_none_or(|(_, lt, _)| t >= lt)
+            {
                 self.last_estimate_t = t;
                 self.emit_player(p, t, out, PosSource::Estimate, Some((sigma, v)));
             }
@@ -932,23 +1033,42 @@ impl Aion2Decoder {
         src: PosSource,
         estimate: Option<(f64, (f64, f64))>,
     ) {
-        // The game does not send which way we face; the direction of travel
-        // is the next best thing, when we are clearly moving.
         let heading = match estimate {
             Some((_, (vx, vy))) if vx.hypot(vy) > 200.0 => Some(self.heading_of(vx, vy)),
-            Some(_) => None,
-            None => self.last_pos.and_then(|(lp, lt, _)| {
-                let (dx, dy) = ((p[0] - lp[0]) as f64, (p[1] - lp[1]) as f64);
-                (t > lt && t - lt <= 3_000 && dx.hypot(dy) > 150.0).then(|| self.heading_of(dx, dy))
-            }),
+            _ => None,
         };
+        let heading = self.camera_heading(t).or(heading);
+        self.emit_player_as(p, t, out, src, estimate.map(|(s, _)| s), heading);
+    }
+
+    /// `sigma`: 1-sigma uncertainty (game units) of an estimated position;
+    /// `heading`: compass degrees, when known (camera direction or travel).
+    fn emit_player_as(
+        &mut self,
+        p: [f32; 3],
+        t: Millis,
+        out: &mut Vec<WireEvent>,
+        src: PosSource,
+        sigma: Option<f64>,
+        heading: Option<f64>,
+    ) {
+        // Without a camera direction, the direction of travel is the next
+        // best thing, when we are clearly moving (and the previous position
+        // came from the same kind of source, so a switch is not a "move").
+        let heading = heading.or_else(|| {
+            self.last_pos.and_then(|(lp, lt, ls)| {
+                let (dx, dy) = ((p[0] - lp[0]) as f64, (p[1] - lp[1]) as f64);
+                (ls == src && t > lt && t - lt <= 3_000 && dx.hypot(dy) > 150.0)
+                    .then(|| self.heading_of(dx, dy))
+            })
+        });
         self.last_pos = Some((p, t, src));
         out.push(WireEvent::Player {
             t,
             pos: self.to_world(p),
             heading,
             zone: None,
-            accuracy: estimate.map(|(s, _)| s / self.cfg.units_per_meter),
+            accuracy: sigma.map(|s| s / self.cfg.units_per_meter),
         });
     }
 
@@ -984,11 +1104,13 @@ impl Aion2Decoder {
             position_source: match self.last_pos {
                 Some((_, _, PosSource::Client)) => "client",
                 Some((_, _, PosSource::Server)) => "server",
+                Some((_, _, PosSource::Minimap)) => "minimap",
                 Some((_, _, PosSource::Estimate)) => "estimate",
                 None => "none",
             }
             .into(),
             position_age_ms: self.last_pos.map(|(_, t, _)| now - t),
+            minimap: self.minimap.status(now),
             movement: self.movement.status(),
             estimate: self.edge.status(self.cfg.units_per_meter),
             warnings,

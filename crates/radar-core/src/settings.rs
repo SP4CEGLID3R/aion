@@ -41,6 +41,72 @@ pub enum RadarStyle {
     Minimap,
 }
 
+/// A rectangle in physical screen pixels (the virtual screen: may be
+/// negative left of or above the primary monitor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenRegion {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Following the player with the in-game minimap (read from the screen).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct MinimapSettings {
+    pub enabled: bool,
+    /// The minimap's map area (below its title bar). `None`: the default
+    /// spot of the default HUD, top right of the primary monitor.
+    pub region: Option<ScreenRegion>,
+    /// Captures per second.
+    pub fps: u32,
+    /// Draw the live minimap behind the radar.
+    pub background: bool,
+}
+
+impl Default for MinimapSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            region: None,
+            fps: 10,
+            background: true,
+        }
+    }
+}
+
+pub const MINIMAP_FPS_LIMITS: (u32, u32) = (4, 20);
+
+/// Arrows that point at the nearest live cube.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GuideSettings {
+    /// On the radar, on a ring around your marker.
+    pub radar_arrow: bool,
+    /// Over the game, around your character (needs the camera direction
+    /// from minimap tracking).
+    pub screen_arrow: bool,
+    /// Where your character is on the screen, as fractions of the monitor.
+    pub screen_x: f64,
+    pub screen_y: f64,
+    /// Size of the on-screen arrow ring, physical pixels.
+    pub screen_size: f64,
+}
+
+impl Default for GuideSettings {
+    fn default() -> Self {
+        Self {
+            radar_arrow: true,
+            screen_arrow: true,
+            screen_x: 0.5,
+            screen_y: 0.62,
+            screen_size: 260.0,
+        }
+    }
+}
+
 /// A sound when a new cube appears on the radar.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -223,6 +289,8 @@ pub struct RadarSettings {
     /// Your path over the last minute.
     pub show_trail: bool,
     pub alert_sound: AlertSound,
+    pub minimap: MinimapSettings,
+    pub guide: GuideSettings,
 }
 
 impl Default for RadarSettings {
@@ -249,6 +317,8 @@ impl Default for RadarSettings {
             map_grid: true,
             show_trail: true,
             alert_sound: AlertSound::default(),
+            minimap: MinimapSettings::default(),
+            guide: GuideSettings::default(),
         }
     }
 }
@@ -362,6 +432,40 @@ impl RadarSettings {
         }
         if a.file.as_deref().is_some_and(|f| f.trim().is_empty()) {
             a.file = None;
+        }
+
+        let m = &mut s.minimap;
+        let (lo, hi) = MINIMAP_FPS_LIMITS;
+        if !(lo..=hi).contains(&m.fps) {
+            let c = m.fps.clamp(lo, hi);
+            w.push(format!(
+                "minimap.fps {} is outside {lo}–{hi}; using {c}",
+                m.fps
+            ));
+            m.fps = c;
+        }
+        if let Some(r) = m.region {
+            if !(40..=2000).contains(&r.width) || !(40..=2000).contains(&r.height) {
+                w.push(format!(
+                    "minimap region {}×{} is not a plausible minimap; using the default spot",
+                    r.width, r.height
+                ));
+                m.region = None;
+            }
+        }
+        let g = &mut s.guide;
+        for (name, v, def) in [
+            ("guide.screenX", &mut g.screen_x, 0.5),
+            ("guide.screenY", &mut g.screen_y, 0.62),
+        ] {
+            if !(v.is_finite() && (0.0..=1.0).contains(v)) {
+                w.push(format!("{name} must be between 0 and 1; using {def}"));
+                *v = def;
+            }
+        }
+        if !(g.screen_size.is_finite() && (80.0..=1200.0).contains(&g.screen_size)) {
+            w.push("guide.screenSize must be 80–1200 px; using 260".into());
+            g.screen_size = 260.0;
         }
 
         if let Err(e) = s.coordinate_transform.validate() {

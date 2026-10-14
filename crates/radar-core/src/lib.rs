@@ -18,8 +18,8 @@ pub use model::{
     CubeEvent, CubeEventKind, CubeState, Millis, PlayerUpdate, Provenance, RadarEvent,
 };
 pub use settings::{
-    AlertSound, CaptureDecoder, CaptureNorth, DataSourceConfig, RadarColors, RadarSettings,
-    RadarStyle, RotationMode, WindowMode,
+    AlertSound, CaptureDecoder, CaptureNorth, DataSourceConfig, GuideSettings, MinimapSettings,
+    RadarColors, RadarSettings, RadarStyle, RotationMode, ScreenRegion, WindowMode,
 };
 pub use tracker::{
     CubeRecord, Diagnostics, HistoryEntry, Outcome, RejectReason, Tracker, TrackerConfig,
