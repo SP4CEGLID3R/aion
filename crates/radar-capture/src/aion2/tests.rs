@@ -91,6 +91,26 @@ fn builtin_config_is_valid_and_skips_hypotheses_by_default() {
 }
 
 #[test]
+fn unconfirmed_types_are_shown_only_when_asked_and_say_so() {
+    let mut cfg = Aion2Config::builtin();
+    cfg.use_hypotheses = true;
+    let mut d = Aion2Decoder::new(cfg).unwrap();
+    let ev = d.on_frame(&f([0x34, 0x36], spawn_body(5, 1_301_199, CUBE, 0)), 0);
+    let [WireEvent::CubeSpawned { label, .. }] = ev.as_slice() else {
+        panic!("{ev:?}")
+    };
+    assert_eq!(
+        label.as_deref(),
+        Some("Hidden Cube? (Altgard, unconfirmed type)")
+    );
+
+    let mut off = dec();
+    assert!(off
+        .on_frame(&f([0x34, 0x36], spawn_body(5, 1_301_199, CUBE, 0)), 0)
+        .is_empty());
+}
+
+#[test]
 fn parses_the_documented_spawn_layout() {
     let s = parse_spawn(&spawn_body(65_509, 1_200_039, CUBE, 1_791_884_649_000)).unwrap();
     assert_eq!((s.id, s.kind, s.template), (65_509, 4, 1_200_039));

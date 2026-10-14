@@ -77,6 +77,7 @@ export type DataSourceConfig =
       decoder: "aion2" | "profile" | "none";
       profilePath: string | null;
       north: "neg_y" | "pos_y";
+      includeUnconfirmed: boolean;
       record: boolean;
     }
   | { kind: "none" };

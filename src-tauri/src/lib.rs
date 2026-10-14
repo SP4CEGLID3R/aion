@@ -86,6 +86,7 @@ fn capture_source(
         decoder,
         profile_path,
         north,
+        include_unconfirmed,
         record,
     } = cfg
     else {
@@ -94,6 +95,7 @@ fn capture_source(
     let decoder = match decoder {
         CaptureDecoder::Aion2 => {
             let mut config = aion2_config(&paths.config_dir, warnings);
+            config.use_hypotheses |= *include_unconfirmed;
             config.north = match north {
                 CaptureNorth::NegY => North::NegY,
                 CaptureNorth::PosY => North::PosY,

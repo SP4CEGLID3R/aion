@@ -25,7 +25,8 @@ is see-through.*
 > [aion2-cube-radar](https://github.com/dennisreichenberg/aion2-cube-radar)
 > findings, re-implemented here and checked against its real captures (all
 > cubes and positions matched). Cube types in other zones are learned the
-> first time you open one with a key. Details, evidence and limits:
+> first time you open one with a key; for Altgard an unconfirmed type can be
+> switched on in Settings (shown as "Hidden Cube?"). Details, evidence and limits:
 > [docs/05-aion2-protocol.md](docs/05-aion2-protocol.md).
 >
 > Not yet tried against the live game by this project. Verified for the

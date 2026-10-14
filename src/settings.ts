@@ -103,6 +103,7 @@ function readSource(): DataSourceConfig {
         decoder: (select("decoder") || "aion2") as "aion2" | "profile" | "none",
         profilePath: text("profilePath"),
         north: (select("north") || "neg_y") as "neg_y" | "pos_y",
+        includeUnconfirmed: val("includeUnconfirmed").checked,
         record: val("record").checked,
       };
     }

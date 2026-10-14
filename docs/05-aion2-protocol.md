@@ -23,7 +23,7 @@ are LEB128.
 | Framing | `varint len, [flag F0–FE], payload`; frame = len + varint bytes − 4; `FF FF` = LZ4 bundle | — | Verified (B2, B4); same as the Aether DPS meter documents |
 | `34 36` | Object spawn | id varint, kind u16, **template u32**, **x y z f32**, f32, heading f32, 3 B, created u64 ms | Verified (B5, B9) |
 | — | **Hidden cube** = spawn with template **1200039** or **1200041** (Verteron) | — | Verified: 5 cubes, positions equal known cube spots to the unit |
-| — | Template 1301199 (Altgard?) | — | **Hypothesis**, a single third-party source. Off by default |
+| — | Template 1301199 (Altgard?) | — | **Hypothesis**, a single third-party source. Off by default; Settings → *Also show unconfirmed cube types* turns it on, and its markers read "Hidden Cube? (…, unconfirmed type)" |
 | `35 36` | Object removed | id varint, reason u8: **04** opened, **01** left the send range | 04 verified for cubes (B6); 01 seen for other objects (O2) |
 | `38 36` / `3a 36` | Opening starts / finishes | object varint, actor varint, … / count u32, item u32 | Verified (B6) |
 | — | Cube key | `3a 36` ends with count 1, item `0x259AC523` | Seen on all 3 cube openings. Used only to *learn* new cube templates |

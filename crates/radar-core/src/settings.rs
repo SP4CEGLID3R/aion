@@ -100,6 +100,10 @@ pub enum DataSourceConfig {
         /// Which game axis is map north (built-in decoder).
         #[serde(default)]
         north: CaptureNorth,
+        /// Also treat cube types known only from a single unverified source
+        /// (e.g. Altgard) as cubes. Their markers say so.
+        #[serde(default, rename = "includeUnconfirmed")]
+        include_unconfirmed: bool,
         /// Record the game connection (and markers) for discovery work.
         #[serde(default)]
         record: bool,
@@ -446,6 +450,7 @@ mod tests {
                 decoder: CaptureDecoder::Aion2,
                 profile_path: Some("p.json".into()),
                 north: CaptureNorth::NegY,
+                include_unconfirmed: false,
                 record: true
             }
         );

@@ -534,7 +534,16 @@ impl Aion2Decoder {
                 self.objects.insert(s.id, s.template);
                 if self.is_cube_template(s.template) {
                     let tpl = &self.templates[&s.template];
-                    let label = format!("Hidden Cube ({})", tpl.zone);
+                    let label = match tpl.status {
+                        TemplateStatus::Verified => format!("Hidden Cube ({})", tpl.zone),
+                        TemplateStatus::Learned => format!("Hidden Cube ({}, learned)", tpl.zone),
+                        TemplateStatus::Hypothesis => {
+                            format!(
+                                "Hidden Cube? ({}, unconfirmed type)",
+                                tpl.zone.trim_end_matches('?')
+                            )
+                        }
+                    };
                     self.live.insert(s.id, [s.pos[0], s.pos[1], s.pos[2]]);
                     self.cubes_seen_total += 1;
                     let w = self.to_world(s.pos);
