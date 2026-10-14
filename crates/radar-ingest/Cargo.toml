@@ -1,0 +1,13 @@
+[package]
+name = "radar-ingest"
+description = "Data sources, the Radar Event Protocol v1, the synthetic frame parser and the ingest pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+radar-core = { path = "../radar-core" }
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+thiserror.workspace = true

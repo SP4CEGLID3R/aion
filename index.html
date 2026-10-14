@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cube Radar</title>
+    <link rel="stylesheet" href="/src/styles/radar.css" />
+  </head>
+  <body>
+    <div id="root">
+      <header id="toolbar" data-tauri-drag-region>
+        <span class="title" data-tauri-drag-region>Cube radar</span>
+        <button id="btn-settings" type="button" title="Settings" aria-label="Settings">⚙</button>
+      </header>
+      <div id="stage">
+        <canvas id="radar" aria-label="Radar"></canvas>
+        <span id="badge" class="badge" hidden></span>
+        <div id="banner" role="status" hidden></div>
+      </div>
+      <footer id="legend">
+        <span class="item"><i class="sw live"></i>Confirmed, currently spawned cubes only</span>
+        <span class="item" id="legend-stale" hidden><i class="sw stale"></i>Stale — no longer verified</span>
+        <span class="item" id="legend-arrow"><i class="sw arrow"></i>Live cube beyond range</span>
+        <span class="note">Spawn points, predictions and past locations are never shown.</span>
+      </footer>
+      <div id="status"></div>
+      <div id="resize-grip" title="Resize"></div>
+    </div>
+    <script type="module" src="/src/radar.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Radar Settings</title>
+    <link rel="stylesheet" href="/src/styles/settings.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Cube radar — settings</h1>
+      <p class="lead">
+        Markers on the radar are <strong>confirmed, currently spawned cubes only</strong>. Static spawn points,
+        predicted locations and past locations are never drawn.
+      </p>
+      <div id="preview-note" class="note warn" hidden>
+        Browser preview: the Rust pipeline is not running, so settings are not validated and the debug panel is empty.
+      </div>
+      <div id="warnings" class="note warn" hidden></div>
+
+      <form id="form" autocomplete="off">
+        <fieldset>
+          <legend>Display</legend>
+          <label>Range (world units, centre to rim) <input name="range" type="number" min="5" max="10000" step="5" /></label>
+          <label>Rotation
+            <select name="rotationMode">
+              <option value="north_up">North up</option>
+              <option value="heading_up">Heading up</option>
+            </select>
+          </label>
+          <label>Extra rotation (°) <input name="rotationOffsetDeg" type="number" step="1" /></label>
+          <label>Opacity <input name="opacity" type="range" min="0.1" max="1" step="0.05" /></label>
+          <label class="check"><input name="showLabels" type="checkbox" /> Labels</label>
+          <label class="check"><input name="showDistances" type="checkbox" /> Distances</label>
+          <label class="check"><input name="showIndicators" type="checkbox" /> Direction arrows for cubes beyond range</label>
+          <label class="check"><input name="showLegend" type="checkbox" /> Legend</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Colours</legend>
+          <div class="colors">
+            <label>Background <input name="colors.background" type="color" /></label>
+            <label>Rings <input name="colors.ring" type="color" /></label>
+            <label>Player <input name="colors.player" type="color" /></label>
+            <label>Cube <input name="colors.cube" type="color" /></label>
+            <label>Stale <input name="colors.stale" type="color" /></label>
+            <label>Labels <input name="colors.label" type="color" /></label>
+            <label>Arrows <input name="colors.indicator" type="color" /></label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Stale data</legend>
+          <label>Stale after (s without confirmation) <input name="staleTimeoutSecs" type="number" min="1" max="600" step="1" /></label>
+          <label>Stale cubes
+            <select name="staleDisplay">
+              <option value="hide">Hide them</option>
+              <option value="mark_stale">Show them, clearly marked STALE</option>
+            </select>
+          </label>
+          <label>Forget stale cubes after (s) <input name="staleRetainSecs" type="number" min="0" max="3600" step="1" /></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Window</legend>
+          <label>Mode
+            <select name="windowMode">
+              <option value="overlay">Overlay — transparent, always on top</option>
+              <option value="separate">Separate window — framed, not on top</option>
+            </select>
+          </label>
+          <label class="check"><input name="clickThrough" type="checkbox" /> Click-through (overlay mode; change back here)</label>
+          <label>Updates per second <input name="updateHz" type="number" min="1" max="60" step="1" /></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Data source</legend>
+          <label>Source
+            <select name="dataSource.kind">
+              <option value="synthetic">Synthetic simulator (made-up data)</option>
+              <option value="replay">Replay a file (.jsonl, .srf, .srf.hex)</option>
+              <option value="local_tcp">Local telemetry on 127.0.0.1 (Radar Event Protocol v1)</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+          <div data-source="synthetic">
+            <label>Seed <input name="dataSource.seed" type="number" min="0" step="1" /></label>
+            <label>Cubes <input name="dataSource.cubeCount" type="number" min="0" max="200" step="1" /></label>
+          </div>
+          <div data-source="replay">
+            <label>File path <input name="dataSource.path" type="text" placeholder="C:\path\to\session.jsonl" /></label>
+            <label>Speed <input name="dataSource.speed" type="number" min="0.1" max="100" step="0.1" /></label>
+            <label class="check"><input name="dataSource.loop" type="checkbox" /> Loop</label>
+          </div>
+          <div data-source="local_tcp">
+            <label>Port <input name="dataSource.port" type="number" min="1024" max="65535" step="1" /></label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Source coordinate frame</legend>
+          <p class="hint">How the source's axes map to east / north / up. Leave as-is for the simulator.</p>
+          <div class="colors">
+            <label>East = <select name="coordinateTransform.east" data-axis></select></label>
+            <label>North = <select name="coordinateTransform.north" data-axis></select></label>
+            <label>Up = <select name="coordinateTransform.up" data-axis></select></label>
+          </div>
+          <label>Scale (world units per source unit) <input name="coordinateTransform.scale" type="number" step="any" min="0" /></label>
+          <label>Heading offset (°) <input name="coordinateTransform.headingOffsetDeg" type="number" step="any" /></label>
+          <label class="check"><input name="coordinateTransform.headingClockwise" type="checkbox" /> Source heading is clockwise</label>
+        </fieldset>
+
+        <div class="actions">
+          <button type="submit">Apply</button>
+          <button type="button" id="reset">Reset to defaults</button>
+        </div>
+      </form>
+
+      <section id="debug">
+        <h2>Diagnostics</h2>
+        <p class="hint">For debugging only. Nothing in this panel is ever drawn on the radar.</p>
+        <div id="debug-summary"></div>
+        <h3>Tracked cubes</h3>
+        <table id="debug-cubes"><thead><tr><th>id</th><th>state</th><th>position</th><th>last confirmed</th></tr></thead><tbody></tbody></table>
+        <h3>Event history (newest first)</h3>
+        <table id="debug-history"><thead><tr><th>time</th><th>event</th><th>id</th><th>provenance</th><th>outcome</th></tr></thead><tbody></tbody></table>
+      </section>
+    </main>
+    <script type="module" src="/src/settings.ts"></script>
+  </body>
+</html>

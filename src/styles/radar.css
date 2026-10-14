@@ -1,0 +1,185 @@
+:root {
+  color-scheme: dark;
+  --fg: #e8edf5;
+  --muted: #9aa6b8;
+  --panel: rgba(11, 18, 32, 0.72);
+  --live: #ffcc33;
+  --stale: #8a8f98;
+  font: 12px/1.35 system-ui, "Segoe UI", sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  /* Transparent in overlay mode: the window itself is see-through. */
+  background: transparent;
+  color: var(--fg);
+  user-select: none;
+}
+
+body.separate {
+  background: #0b1220;
+}
+
+#root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 6px;
+  background: var(--panel);
+  border-radius: 6px;
+  margin: 4px 4px 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+  cursor: move;
+}
+
+#root:hover #toolbar,
+body.separate #toolbar {
+  opacity: 1;
+}
+
+#toolbar .title {
+  flex: 1;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.badge {
+  /* Always visible: synthetic data must never pass for game data. */
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: #7c3aed;
+  color: white;
+}
+
+.badge.preview {
+  background: #b45309;
+}
+
+#toolbar button {
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+#stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+#radar {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#banner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, 28px);
+  max-width: 80%;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #ffd27a;
+  text-align: center;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+#legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin: 0 4px;
+  padding: 3px 6px;
+  background: var(--panel);
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+#legend .note {
+  color: var(--muted);
+  width: 100%;
+}
+
+.sw {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  transform: rotate(45deg);
+  vertical-align: 0;
+}
+
+.sw.live {
+  background: var(--live);
+}
+
+.sw.stale {
+  border: 1.5px dashed var(--stale);
+  width: 6px;
+  height: 6px;
+}
+
+.sw.arrow {
+  transform: none;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 9px solid var(--live);
+}
+
+#status {
+  margin: 2px 4px 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#resize-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.35) 50%);
+  border-bottom-right-radius: 4px;
+  opacity: 0;
+}
+
+#root:hover #resize-grip {
+  opacity: 1;
+}
+
+body.separate #resize-grip {
+  display: none;
+}

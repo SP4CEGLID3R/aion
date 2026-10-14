@@ -1,0 +1,13 @@
+[package]
+name = "radar-core"
+description = "Data model, live-cube state tracking and coordinate maths for the AION 2 radar overlay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

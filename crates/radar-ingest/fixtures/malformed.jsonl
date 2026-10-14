@@ -1,0 +1,7 @@
+# Malformed input for parser tests: 2 good lines, 4 bad ones.
+{"v":1,"type":"cube_seen","t":1,"id":"ok-1"}
+{not json
+{"type":"cube_seen","t":1,"id":"no-version"}
+{"v":1,"type":"teleport","t":1}
+{"v":1,"type":"cube_spawned","t":1,"id":"no-pos"}
+{"v":1,"type":"zone_changed","t":2,"zone":"z"}
