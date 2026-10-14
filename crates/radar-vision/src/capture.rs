@@ -104,7 +104,7 @@ pub fn grab_once(rect: ScreenRect) -> Result<Vec<u8>, CaptureError> {
 
 /// BGRX → RGBA in place (alpha 255), for showing a capture in a canvas.
 pub fn bgrx_to_rgba(buf: &mut [u8]) {
-    for px in buf.chunks_exact_mut(4) {
+    for px in buf.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
         px[3] = 255;
     }
