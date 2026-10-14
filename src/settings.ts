@@ -2,7 +2,15 @@
 // diagnostics panel polled from the backend.
 
 import { backend } from "./lib/bridge";
-import type { CaptureStatus, DataSourceConfig, DebugReport, RadarSettings, SourceAxis } from "./lib/types";
+import { alertError, playAlert } from "./lib/sound";
+import type {
+  Aion2Status,
+  CaptureStatus,
+  DataSourceConfig,
+  DebugReport,
+  RadarSettings,
+  SourceAxis,
+} from "./lib/types";
 
 const form = document.querySelector<HTMLFormElement>("#form")!;
 const warningsEl = document.querySelector<HTMLElement>("#warnings")!;
@@ -75,7 +83,10 @@ function read(): RadarSettings {
     setPath(out, el.name, value);
   }
   out.dataSource = readSource();
-  return out as unknown as RadarSettings;
+  const settings = out as unknown as RadarSettings;
+  const file = settings.alertSound.file?.trim();
+  settings.alertSound.file = file ? file : null;
+  return settings;
 }
 
 function readSource(): DataSourceConfig {
@@ -191,6 +202,39 @@ function renderDebug(r: DebugReport | null): void {
   );
 }
 
+function positionText(a: Aion2Status): string {
+  const age = a.positionAgeMs !== null ? ` (${(a.positionAgeMs / 1000).toFixed(1)} s ago)` : "";
+  switch (a.positionSource) {
+    case "client":
+      return `live from your client's movement${age}`;
+    case "estimate":
+      return `estimated from objects around you${age}`;
+    case "server":
+      return `reported by the server${age}`;
+    default:
+      return "not received yet";
+  }
+}
+
+function trackingText(a: Aion2Status): string {
+  const parts: string[] = [];
+  const m = a.movement;
+  parts.push(
+    m.state === "found"
+      ? `client movement: found (${m.updates} updates)`
+      : m.state === "learning"
+        ? `client movement: learning (${m.clientFrames} client packets, ${m.fixesSeen} server fixes)`
+        : "client movement: off",
+  );
+  const e = a.estimate;
+  const check = e.checkErrorM !== null ? `, checked ${e.checks}× — off by ${e.checkErrorM.toFixed(1)} m (median)` : "";
+  parts.push(
+    `estimate: ${e.radiiKnown} object types with known range, ${e.rangeUpdates} updates${check}` +
+      (e.trusted ? "" : " — NOT shown: checks disagree"),
+  );
+  return parts.join("; ");
+}
+
 function renderCapture(c: CaptureStatus | null): void {
   const section = document.querySelector<HTMLElement>("#capture")!;
   section.hidden = c === null;
@@ -214,8 +258,10 @@ function renderCapture(c: CaptureStatus | null): void {
     ...(c.aion2
       ? ([
           ["Zone", c.aion2.zone ?? "not seen yet (changes on loading screens)"],
-          ["Your character", c.aion2.selfId !== null ? `id ${c.aion2.selfId}` : "not identified yet — cast a buff on yourself"],
-          ["Your position", c.aion2.selfFixAgeMs !== null ? `${Math.round(c.aion2.selfFixAgeMs / 1000)} s old` : "not received yet"],
+          ["Your character", c.aion2.selfId !== null ? `id ${c.aion2.selfId}` : "not identified yet — open your wings"],
+          ["Your position", positionText(c.aion2)],
+          ["Last server fix", c.aion2.selfFixAgeMs !== null ? `${Math.round(c.aion2.selfFixAgeMs / 1000)} s ago` : "not received yet — open your wings"],
+          ["Tracking between fixes", trackingText(c.aion2)],
           ["Hidden cubes in range", String(c.aion2.cubesLive)],
           ["Cubes seen this session", String(c.aion2.cubesSeenTotal)],
           ["Learned cube templates", c.aion2.learnedTemplates.join(", ") || "none"],
@@ -282,6 +328,13 @@ async function main(): Promise<void> {
     } catch (err) {
       showWarnings([`Could not apply settings: ${String(err)}`]);
     }
+  });
+  document.querySelector("#test-sound")!.addEventListener("click", async () => {
+    const result = document.querySelector<HTMLElement>("#test-sound-result")!;
+    const sound = read().alertSound;
+    await playAlert(sound);
+    const err = sound.file ? alertError() : null;
+    result.textContent = err ? `${err} — played the built-in chime instead` : sound.file ? "" : "built-in chime";
   });
   document.querySelector("#reset")!.addEventListener("click", async () => {
     const res = await backend.resetSettings();

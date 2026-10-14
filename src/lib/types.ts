@@ -6,6 +6,15 @@ export type WindowMode = "overlay" | "separate";
 export type StaleDisplay = "hide" | "mark_stale";
 export type SourceState = "starting" | "connected" | "waiting" | "finished" | "error" | "disabled";
 export type SourceAxis = "pos_x" | "neg_x" | "pos_y" | "neg_y" | "pos_z" | "neg_z";
+export type RadarStyle = "radar" | "minimap";
+
+export interface AlertSound {
+  enabled: boolean;
+  /** 0 – 1. */
+  volume: number;
+  /** A sound file of your own; the built-in chime when null. */
+  file: string | null;
+}
 
 export interface WorldPos {
   x: number;
@@ -18,6 +27,8 @@ export interface PlayerView {
   headingDeg: number | null;
   ageMs: number;
   stale: boolean;
+  /** 1-sigma uncertainty in metres when the position is an estimate. */
+  accuracyM: number | null;
 }
 
 export interface CubeView {
@@ -111,6 +122,17 @@ export interface Aion2Status {
   objectsTracked: number;
   lastObjectSpawnMs: number | null;
   learnedTemplates: number[];
+  positionSource: "client" | "server" | "estimate" | "none";
+  positionAgeMs: number | null;
+  movement: { state: "learning" | "found" | "off"; source: unknown; updates: number; clientFrames: number; fixesSeen: number };
+  estimate: {
+    radiiKnown: number;
+    rangeUpdates: number;
+    rangeRejected: number;
+    checkErrorM: number | null;
+    checks: number;
+    trusted: boolean;
+  };
   warnings: string[];
 }
 
@@ -170,6 +192,10 @@ export interface RadarSettings {
   updateHz: number;
   dataSource: DataSourceConfig;
   coordinateTransform: CoordinateTransform;
+  style: RadarStyle;
+  mapGrid: boolean;
+  showTrail: boolean;
+  alertSound: AlertSound;
 }
 
 export interface SettingsUpdate {
@@ -247,4 +273,8 @@ export const DEFAULT_SETTINGS: RadarSettings = {
     headingOffsetDeg: 0,
     headingClockwise: true,
   },
+  style: "radar",
+  mapGrid: true,
+  showTrail: true,
+  alertSound: { enabled: true, volume: 0.8, file: null },
 };

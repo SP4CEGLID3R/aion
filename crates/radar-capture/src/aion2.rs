@@ -32,8 +32,14 @@
 //!   seconds. If the stream stalls or bytes are lost, confirmations stop and
 //!   every cube is marked lost: nothing is shown as live on a guess.
 //! * **Gone**: reason 04 → collected; reason 01 → lost (stale, not live).
-//! * **Player position**: only arrives with events (own buffs, being
-//!   attacked, map loads). The radar shows how old it is.
+//! * **Player position**: the server reports it only with events (own
+//!   buffs, opening the wings, being attacked, map loads). In between, the
+//!   radar follows you with whichever of these works, best first:
+//!   1. the client's own movement reports, once `movement` has learned
+//!      where they carry the position (only if that traffic is readable);
+//!   2. an estimate from objects entering and leaving the send range
+//!      (`edge`), checked against every server fix and shown with its
+//!      uncertainty.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
@@ -43,6 +49,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::discovery::read_varint;
 use crate::framing::Frame;
+
+mod edge;
+mod movement;
+
+pub use edge::{Edge, EdgeEstimator, EstimateStatus, RadiusSeed};
+pub use movement::{Anchor, MoveSource, MovementLearner, MovementStatus};
 
 pub const DEFAULT_CONFIG_JSON: &str = include_str!("aion2-default.json");
 
@@ -114,11 +126,62 @@ pub struct Aion2Config {
     pub north: North,
     pub seen_interval_ms: Millis,
     pub stream_timeout_ms: Millis,
+    /// Learn which client packet carries the own movement (see `movement`).
+    #[serde(default = "yes")]
+    pub learn_movement: bool,
+    /// A known client movement field, used right away instead of learning.
+    #[serde(default)]
+    pub own_movement: Option<MoveSource>,
+    /// Estimate the own position between server fixes from objects entering
+    /// and leaving the send range (see `edge`).
+    #[serde(default = "yes")]
+    pub estimate_position: bool,
+    /// Send radii per object template (game units), used before they are
+    /// learned. Keys are template numbers.
+    #[serde(default)]
+    pub object_radii: BTreeMap<String, RadiusSeed>,
+    /// A movement field learned in an earlier session: tried first, and
+    /// dropped like any learned one if the server disagrees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub movement_hint: Option<MoveSource>,
+}
+
+/// What the decoder learned in game, kept for the next session.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Aion2Learned {
+    #[serde(default)]
+    pub object_radii: BTreeMap<String, RadiusSeed>,
+    #[serde(default)]
+    pub own_movement: Option<MoveSource>,
+}
+
+impl Aion2Learned {
+    pub fn is_empty(&self) -> bool {
+        self.object_radii.is_empty() && self.own_movement.is_none()
+    }
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Aion2Config {
     pub fn builtin() -> Aion2Config {
         serde_json::from_str(DEFAULT_CONFIG_JSON).expect("built-in AION 2 config is valid")
+    }
+
+    /// Uses radii and the movement field learned in earlier sessions.
+    /// Measured radii replace the built-in seeds.
+    pub fn apply_learned(&mut self, learned: &Aion2Learned) {
+        for (k, r) in &learned.object_radii {
+            let e = self.object_radii.entry(k.clone()).or_default();
+            e.enter = r.enter.or(e.enter);
+            e.leave = r.leave.or(e.leave);
+        }
+        if self.own_movement.is_none() {
+            self.movement_hint = learned.own_movement.clone();
+        }
     }
 
     pub fn from_json(text: &str) -> Result<Aion2Config, String> {
@@ -356,7 +419,20 @@ pub struct Aion2Status {
     pub objects_tracked: usize,
     pub last_object_spawn_ms: Option<Millis>,
     pub learned_templates: Vec<u32>,
+    /// Where the radar's own position comes from right now: "client"
+    /// (movement reports), "server" (an event), "estimate" or "none".
+    pub position_source: String,
+    pub position_age_ms: Option<Millis>,
+    pub movement: MovementStatus,
+    pub estimate: EstimateStatus,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PosSource {
+    Client,
+    Server,
+    Estimate,
 }
 
 pub struct Aion2Decoder {
@@ -368,8 +444,8 @@ pub struct Aion2Decoder {
     votes: VecDeque<(u64, u32)>,
     last_fix_by_entity: HashMap<u64, ([f32; 3], Millis)>,
     self_fix_t: Option<Millis>,
-    /// Every object of this connection: id → template.
-    objects: HashMap<u64, u32>,
+    /// Every object of this connection: id → (template, position).
+    objects: HashMap<u64, (u32, [f32; 3])>,
     live: BTreeMap<u64, [f32; 3]>,
     map_id: Option<u32>,
     last_heartbeat: Option<Millis>,
@@ -378,7 +454,21 @@ pub struct Aion2Decoder {
     started: Option<Millis>,
     cubes_seen_total: u64,
     learned: Vec<u32>,
+    movement: MovementLearner,
+    edge: EdgeEstimator,
+    /// (server unix ms, local t) from the last heartbeat.
+    server_clock: Option<(i64, Millis)>,
+    last_t: Millis,
+    /// Last emitted own position, its time and where it came from.
+    last_pos: Option<([f32; 3], Millis, PosSource)>,
+    last_client_t: Option<Millis>,
+    last_estimate_t: Millis,
 }
+
+/// Client movement reports newer than this win over estimates.
+const CLIENT_FRESH_MS: Millis = 1_500;
+/// Estimates are moved forward this often between events.
+const ESTIMATE_EVERY_MS: Millis = 250;
 
 const MAX_OBJECTS: usize = 20_000;
 const MAX_FIXES: usize = 2_000;
@@ -393,7 +483,6 @@ impl Aion2Decoder {
             .map(|t| (t.template, t.clone()))
             .collect();
         Ok(Aion2Decoder {
-            cfg,
             ops,
             templates,
             self_id: None,
@@ -410,6 +499,18 @@ impl Aion2Decoder {
             started: None,
             cubes_seen_total: 0,
             learned: Vec::new(),
+            movement: MovementLearner::new(
+                cfg.learn_movement,
+                cfg.own_movement.as_ref(),
+                cfg.movement_hint.as_ref(),
+            ),
+            edge: EdgeEstimator::new(&cfg.object_radii),
+            cfg,
+            server_clock: None,
+            last_t: 0,
+            last_pos: None,
+            last_client_t: None,
+            last_estimate_t: 0,
         })
     }
 
@@ -448,6 +549,30 @@ impl Aion2Decoder {
         self.self_fix_t = None;
         self.objects.clear();
         self.live.clear();
+        self.movement.on_new_connection();
+        self.edge.on_new_connection(self.last_t);
+        self.last_pos = None;
+        self.last_client_t = None;
+    }
+
+    /// What was learned in game (with earlier sessions' results), to keep
+    /// for the next session.
+    pub fn learned(&self) -> Aion2Learned {
+        let mut object_radii = self.cfg.object_radii.clone();
+        for (k, r) in self.edge.learned_radii() {
+            let e = object_radii.entry(k).or_default();
+            e.enter = r.enter.or(e.enter);
+            e.leave = r.leave.or(e.leave);
+        }
+        // Only measured values are kept; the built-in seeds stay built in.
+        static BUILTIN: std::sync::OnceLock<BTreeMap<String, RadiusSeed>> =
+            std::sync::OnceLock::new();
+        let builtin = BUILTIN.get_or_init(|| Aion2Config::builtin().object_radii);
+        object_radii.retain(|k, r| builtin.get(k) != Some(r));
+        Aion2Learned {
+            object_radii,
+            own_movement: self.movement.status().source,
+        }
     }
 
     /// Bytes were lost: a removal may have been missed, so no cube can be
@@ -466,6 +591,33 @@ impl Aion2Decoder {
 
     /// Presence confirmations while the stream is alive; nothing otherwise.
     pub fn tick(&mut self, t: Millis) -> Vec<WireEvent> {
+        let mut out = self.tick_estimate(t);
+        out.extend(self.tick_seen(t));
+        out
+    }
+
+    fn client_fresh(&self, t: Millis) -> bool {
+        self.last_client_t.is_some_and(|c| t - c <= CLIENT_FRESH_MS)
+    }
+
+    /// Moves a shown estimate forward between events.
+    fn tick_estimate(&mut self, t: Millis) -> Vec<WireEvent> {
+        let mut out = Vec::new();
+        if !self.cfg.estimate_position
+            || self.client_fresh(t)
+            || t - self.last_estimate_t < ESTIMATE_EVERY_MS
+            || self.last_pos.is_some_and(|(_, lt, _)| t <= lt)
+        {
+            return out;
+        }
+        if let Some((p, sigma, v)) = self.edge.predict(t) {
+            self.last_estimate_t = t;
+            self.emit_player(p, t, &mut out, PosSource::Estimate, Some((sigma, v)));
+        }
+        out
+    }
+
+    fn tick_seen(&mut self, t: Millis) -> Vec<WireEvent> {
         let alive = self
             .last_heartbeat
             .is_some_and(|hb| t - hb <= self.cfg.stream_timeout_ms);
@@ -485,8 +637,32 @@ impl Aion2Decoder {
             .collect()
     }
 
+    /// A frame the client sent to the server: only used for the own
+    /// movement, never recorded as a server fact.
+    pub fn on_client_frame(&mut self, frame: &Frame, t: Millis) -> Vec<WireEvent> {
+        let mut out = Vec::new();
+        self.last_t = self.last_t.max(t);
+        if let Some(p) = self
+            .movement
+            .on_client_frame(frame.opcode, &frame.payload, t)
+        {
+            self.last_client_t = Some(t);
+            self.edge.on_truth(p, t, 60.0, false);
+            if self.last_pos.is_none_or(|(_, lt, _)| t >= lt) {
+                self.emit_player(p, t, &mut out, PosSource::Client, None);
+            }
+        }
+        out
+    }
+
+    /// Server clock now, from the heartbeats' timestamps.
+    fn server_now(&self, t: Millis) -> Option<i64> {
+        self.server_clock.map(|(s, lt)| s + (t - lt))
+    }
+
     pub fn on_frame(&mut self, frame: &Frame, t: Millis) -> Vec<WireEvent> {
         self.started.get_or_insert(t);
+        self.last_t = self.last_t.max(t);
         let op = frame.opcode;
         let body = &frame.payload[2..];
         let mut out = Vec::new();
@@ -499,12 +675,21 @@ impl Aion2Decoder {
 
         if op == self.ops.heartbeat {
             self.last_heartbeat = Some(t);
+            // The body is the server's unix time in ms (u64).
+            if let Some(ms) = body
+                .get(..8)
+                .map(|b| i64::from_le_bytes(b.try_into().expect("8 bytes")))
+                .filter(|ms| (1_600_000_000_000..2_600_000_000_000).contains(ms))
+            {
+                self.server_clock = Some((ms, t));
+            }
         } else if op == self.ops.self_info {
             if let Some(id) = varint(body, &mut 0) {
                 self.self_from_info = true;
                 self.set_self(id, &mut out, t);
             }
         } else if op == self.ops.map_load {
+            self.edge.quiet(t);
             if let Some(map) = u32_at(body, 4) {
                 if self.map_id != Some(map) {
                     let changed = self.map_id.is_some();
@@ -522,6 +707,7 @@ impl Aion2Decoder {
                 self.own_fix(p, t, &mut out);
             }
         } else if op == self.ops.teleport {
+            self.edge.quiet(t);
             if let Some(p) = xyz_at(body, 6).filter(|p| is_world_position(*p)) {
                 self.own_fix(p, t, &mut out);
             }
@@ -531,7 +717,11 @@ impl Aion2Decoder {
                 if self.objects.len() >= MAX_OBJECTS {
                     self.objects.clear();
                 }
-                self.objects.insert(s.id, s.template);
+                self.objects.insert(s.id, (s.template, s.pos));
+                if self.cfg.estimate_position {
+                    let age = s.created_ms.zip(self.server_now(t)).map(|(c, now)| now - c);
+                    self.edge_event(s.id, s.template, s.pos, Edge::Enter, age, t, &mut out);
+                }
                 if self.is_cube_template(s.template) {
                     let tpl = &self.templates[&s.template];
                     let label = match tpl.status {
@@ -559,7 +749,13 @@ impl Aion2Decoder {
             }
         } else if op == self.ops.object_removed {
             if let Some((id, reason)) = parse_removed(body) {
-                self.objects.remove(&id);
+                let obj = self.objects.remove(&id);
+                match (obj, reason) {
+                    (Some((template, pos)), 0x01) if self.cfg.estimate_position => {
+                        self.edge_event(id, template, pos, Edge::Leave, None, t, &mut out);
+                    }
+                    _ => self.edge.forget(id),
+                }
                 if self.live.remove(&id).is_some() {
                     let id = Some(WireId::Num(id));
                     out.push(match reason {
@@ -608,7 +804,7 @@ impl Aion2Decoder {
         if count != 1 || item != key {
             return;
         }
-        let Some(&template) = self.objects.get(&obj) else {
+        let Some(&(template, _)) = self.objects.get(&obj) else {
             return;
         };
         if self.templates.contains_key(&template) {
@@ -662,8 +858,8 @@ impl Aion2Decoder {
         }
         self.self_id = Some(id);
         if let Some(&(p, t)) = self.last_fix_by_entity.get(&id) {
-            if now - t < 60_000 {
-                self.emit_player(p, t, out);
+            if now - t < 60_000 && self.last_pos.is_none_or(|(_, lt, _)| t >= lt) {
+                self.server_fix(p, t, out);
             }
         }
     }
@@ -678,7 +874,7 @@ impl Aion2Decoder {
         }
         self.last_fix_by_entity.insert(entity, (p, t));
         if self.self_id == Some(entity) {
-            self.emit_player(p, t, out);
+            self.server_fix(p, t, out);
         }
     }
 
@@ -687,16 +883,72 @@ impl Aion2Decoder {
         if let Some(id) = self.self_id {
             self.last_fix_by_entity.insert(id, (p, t));
         }
-        self.emit_player(p, t, out);
+        self.server_fix(p, t, out);
     }
 
-    fn emit_player(&mut self, p: [f32; 3], t: Millis, out: &mut Vec<WireEvent>) {
+    /// The server told us where we are.
+    fn server_fix(&mut self, p: [f32; 3], t: Millis, out: &mut Vec<WireEvent>) {
         self.self_fix_t = Some(t);
+        self.movement.on_server_fix(p, t);
+        self.edge.on_truth(p, t, 150.0, true);
+        self.emit_player(p, t, out, PosSource::Server, None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn edge_event(
+        &mut self,
+        id: u64,
+        template: u32,
+        q: [f32; 3],
+        edge: Edge,
+        created_age: Option<i64>,
+        t: Millis,
+        out: &mut Vec<WireEvent>,
+    ) {
+        let est = self.edge.on_edge(id, template, q, edge, created_age, t);
+        if let Some((p, sigma, v)) = est {
+            if !self.client_fresh(t) && self.last_pos.is_none_or(|(_, lt, _)| t >= lt) {
+                self.last_estimate_t = t;
+                self.emit_player(p, t, out, PosSource::Estimate, Some((sigma, v)));
+            }
+        }
+    }
+
+    /// Compass heading (degrees) of a game-space direction.
+    fn heading_of(&self, dx: f64, dy: f64) -> f64 {
+        let north = match self.cfg.north {
+            North::NegY => -dy,
+            North::PosY => dy,
+        };
+        dx.atan2(north).to_degrees().rem_euclid(360.0)
+    }
+
+    /// `estimate` = (1-sigma, velocity) in game units.
+    fn emit_player(
+        &mut self,
+        p: [f32; 3],
+        t: Millis,
+        out: &mut Vec<WireEvent>,
+        src: PosSource,
+        estimate: Option<(f64, (f64, f64))>,
+    ) {
+        // The game does not send which way we face; the direction of travel
+        // is the next best thing, when we are clearly moving.
+        let heading = match estimate {
+            Some((_, (vx, vy))) if vx.hypot(vy) > 200.0 => Some(self.heading_of(vx, vy)),
+            Some(_) => None,
+            None => self.last_pos.and_then(|(lp, lt, _)| {
+                let (dx, dy) = ((p[0] - lp[0]) as f64, (p[1] - lp[1]) as f64);
+                (t > lt && t - lt <= 3_000 && dx.hypot(dy) > 150.0).then(|| self.heading_of(dx, dy))
+            }),
+        };
+        self.last_pos = Some((p, t, src));
         out.push(WireEvent::Player {
             t,
             pos: self.to_world(p),
-            heading: None, // the game does not send the own facing
+            heading,
             zone: None,
+            accuracy: estimate.map(|(s, _)| s / self.cfg.units_per_meter),
         });
     }
 
@@ -707,7 +959,10 @@ impl Aion2Decoder {
             warnings.push("No heartbeat from the game for 10 s: is the game running and the right adapter captured?".into());
         }
         if self.self_id.is_none() && since_start > 30_000 {
-            warnings.push("Own character not identified yet: cast a buff on yourself.".into());
+            warnings.push(
+                "Own character not identified yet: open your wings or cast a buff on yourself."
+                    .into(),
+            );
         }
         if since_start > 300_000 && self.last_spawn.is_none_or(|s| now - s > 300_000) {
             warnings.push(
@@ -726,6 +981,16 @@ impl Aion2Decoder {
             objects_tracked: self.objects.len(),
             last_object_spawn_ms: self.last_spawn,
             learned_templates: self.learned.clone(),
+            position_source: match self.last_pos {
+                Some((_, _, PosSource::Client)) => "client",
+                Some((_, _, PosSource::Server)) => "server",
+                Some((_, _, PosSource::Estimate)) => "estimate",
+                None => "none",
+            }
+            .into(),
+            position_age_ms: self.last_pos.map(|(_, t, _)| now - t),
+            movement: self.movement.status(),
+            estimate: self.edge.status(self.cfg.units_per_meter),
             warnings,
         }
     }

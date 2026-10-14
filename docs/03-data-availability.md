@@ -4,7 +4,7 @@
 
 | Question | Answer |
 |---|---|
-| Does the radar read AION 2 data today? | **Yes, with packet capture:** hidden cubes in Verteron (templates verified by aion2-cube-radar), other zones once a cube is opened with a key, and your own position from event packets ([evidence](./05-aion2-protocol.md)). Not yet tried live by this project |
+| Does the radar read AION 2 data today? | **Yes, with packet capture:** hidden cubes in Verteron and Altgard, other zones once a cube is opened with a key, and your own position from event packets, followed in between by an estimate ([evidence](./05-aion2-protocol.md)) |
 | Which AION 2 client versions are supported? | The global client, Steam build **25800038**, per the source captures. Later patches may move opcodes; they are configurable (`aion2-decoder.json`) |
 | What does it run on today? | Passive packet capture with a decoder profile, the built-in synthetic simulator, replay files (`.jsonl`, `.srf`, `.pcap`, `.pcapng`), and a loopback telemetry socket |
 | Can the Aether DPS meter supply the data? | **No.** It parses combat, names, summons and HP only, with no positions and no cubes, and it has no external API ([research](./01-dps-meter-research.md)) |

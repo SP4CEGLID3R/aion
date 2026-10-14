@@ -204,6 +204,7 @@ fn decode_payload(op: u8, t: i64, p: &[u8]) -> Result<WireEvent, DecodeError> {
             expect_len(op, p, 16)?;
             let heading = f32_at(p, 12);
             Ok(WireEvent::Player {
+                accuracy: None,
                 t,
                 pos: xyz(p, 0),
                 heading: (!heading.is_nan()).then_some(heading),

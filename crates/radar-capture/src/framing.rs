@@ -124,6 +124,33 @@ pub struct Framer {
     synced: bool,
     waiting_since: Option<f64>,
     stats: FramingStats,
+    /// Find the position by a run of back-to-back frames instead of a
+    /// heartbeat (for the client→server direction, which may have none).
+    chain_sync: bool,
+}
+
+/// Frames that must follow each other exactly before a chain-synced
+/// position is trusted.
+const CHAIN_MIN: usize = 6;
+/// A chain-synced stream keeps at most this much while looking for a chain.
+const CHAIN_SEARCH_BYTES: usize = 64 * 1024;
+
+/// How many frames chain strictly back to back (no padding) from `start`
+/// and fit in `buf`. Strict, because skipping padding would let a bogus
+/// first frame drift back into alignment.
+fn chain_len(buf: &[u8], start: usize, enough: usize) -> usize {
+    let mut pos = start;
+    let mut n = 0;
+    while n < enough {
+        match buf.get(pos..).map(read_head) {
+            Some(Head::Sized { len, .. }) if pos + len <= buf.len() => {
+                pos += len;
+                n += 1;
+            }
+            _ => break,
+        }
+    }
+    n
 }
 
 impl Framer {
@@ -150,6 +177,22 @@ impl Framer {
         self.feed(&pending[begin..], t_ms)
     }
 
+    /// A framer that synchronises on a run of valid frames rather than on
+    /// heartbeats. Used for the client's own stream.
+    pub fn chain_synced() -> Self {
+        Self {
+            chain_sync: true,
+            ..Self::default()
+        }
+    }
+
+    /// Starts a chain-synced stream; bytes from the connection's first byte
+    /// are trusted to be aligned.
+    pub fn start_chain(&mut self, pending: &[u8], from_start: bool, t_ms: f64) -> Vec<Frame> {
+        self.synced = from_start;
+        self.feed(pending, t_ms)
+    }
+
     /// Bytes were lost under the parser.
     pub fn desync(&mut self) {
         self.synced = false;
@@ -168,7 +211,29 @@ impl Framer {
         let buf = std::mem::take(&mut self.buf);
         let mut pos = 0;
         loop {
-            if !self.synced {
+            if !self.synced && self.chain_sync {
+                let end = buf.len().min(pos + CHAIN_SEARCH_BYTES);
+                match (pos..end)
+                    .find(|&p| buf[p] != 0 && chain_len(&buf, p, CHAIN_MIN) >= CHAIN_MIN)
+                {
+                    Some(p) => {
+                        self.stats.dropped_bytes += (p - pos) as u64;
+                        self.stats.resyncs += 1;
+                        pos = p;
+                        self.synced = true;
+                    }
+                    None => {
+                        // Not enough frames yet to prove a position; keep a
+                        // bounded tail and wait for more.
+                        if buf.len() - pos > CHAIN_SEARCH_BYTES {
+                            let keep = buf.len() - CHAIN_SEARCH_BYTES / 2;
+                            self.stats.dropped_bytes += (keep - pos) as u64;
+                            pos = keep;
+                        }
+                        break;
+                    }
+                }
+            } else if !self.synced {
                 match find(&buf, pos) {
                     Some(hb) => {
                         self.stats.dropped_bytes += (hb - pos) as u64;
@@ -320,6 +385,21 @@ mod tests {
 
     fn heartbeat() -> Vec<u8> {
         encode_frame([0x00, 0x36], &[0u8; 8])
+    }
+
+    #[test]
+    fn chain_sync_finds_frames_without_heartbeats() {
+        let frames: Vec<u8> = (0..10u8)
+            .flat_map(|i| encode_frame([0x10 + i, 0x37], &[i; 20]))
+            .collect();
+        // Joined mid-frame: three stray bytes first.
+        let mut f = Framer::chain_synced();
+        let got = f.start_chain(&[&[0x99, 0x42, 0x13][..], &frames].concat(), false, 0.0);
+        assert!(got.len() >= 8, "{}", got.len());
+        assert!(got.iter().all(|fr| fr.opcode[1] == 0x37));
+        // From the connection's first byte: everything.
+        let mut f = Framer::chain_synced();
+        assert_eq!(f.start_chain(&frames, true, 0.0).len(), 10);
     }
 
     #[test]

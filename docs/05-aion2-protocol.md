@@ -23,7 +23,7 @@ are LEB128.
 | Framing | `varint len, [flag F0–FE], payload`; frame = len + varint bytes − 4; `FF FF` = LZ4 bundle | — | Verified (B2, B4); same as the Aether DPS meter documents |
 | `34 36` | Object spawn | id varint, kind u16, **template u32**, **x y z f32**, f32, heading f32, 3 B, created u64 ms | Verified (B5, B9) |
 | — | **Hidden cube** = spawn with template **1200039** or **1200041** (Verteron) | — | Verified: 5 cubes, positions equal known cube spots to the unit |
-| — | Template 1301199 (Altgard?) | — | **Hypothesis**, a single third-party source. Off by default; Settings → *Also show unconfirmed cube types* turns it on, and its markers read "Hidden Cube? (…, unconfirmed type)" |
+| — | **Hidden cube** = template **1301199** (Altgard) | — | Named by one third-party source (Cube Watch); **confirmed in game** on 2026-10-14: a user of this radar followed its marker to a hidden cube in Altgard |
 | `35 36` | Object removed | id varint, reason u8: **04** opened, **01** left the send range | 04 verified for cubes (B6); 01 seen for other objects (O2) |
 | `38 36` / `3a 36` | Opening starts / finishes | object varint, actor varint, … / count u32, item u32 | Verified (B6) |
 | — | Cube key | `3a 36` ends with count 1, item `0x259AC523` | Seen on all 3 cube openings. Used only to *learn* new cube templates |
@@ -34,6 +34,8 @@ are LEB128.
 | Units | 1 unit = 1 cm | — | Supported: cube openings happen ~2 m away (B7) |
 | North | Map north = world −Y | — | **Unconfirmed**; switchable in Settings |
 | Send range | Cubes arrive about **97–105 m** away (planar) | — | Measured 4 times (B8) |
+| Send range, other objects | Fixed per template, e.g. ≈ 50 m enter / 65 m leave for many `12xxxxx` and 1500004, ≈ 103 / 119 m for 1500000 | — | Medians (B8); used only as starting values, then measured in game |
+| `00 36` body | Server time, unix ms (u64) | — | Seen in every heartbeat of the fixtures (e.g. `b9 38 96 34 a1 01 00 00` = 2026-10-13 09:27 UTC) |
 
 ## Checked against real traffic
 
@@ -49,9 +51,9 @@ real stream fixtures published in aion2-cube-radar:
 * **Positions:** 27 of 27 position records (including records that must be
   rejected) decoded exactly as expected.
 
-Not checked: the live game itself (there is no game client in the
-development environment), zones other than Verteron, and any client build
-after 25800038.
+Not checked here: the live game itself (there is no game client in the
+development environment) and any client build after 25800038. Altgard was
+confirmed by a user in game.
 
 ## How the radar uses it
 
@@ -68,9 +70,31 @@ after 25800038.
   learned for the rest of the session and later spawns of it are shown. The
   panel lists learned templates; add them to `aion2-decoder.json` to keep
   them.
-* **Your position** comes only with events (your buffs, being attacked,
-  loading screens), as all three projects report. The radar shows its age.
-  The game does not send which way you face, so the radar is north-up.
+* **Your position** comes from the server only with events (opening your
+  wings, buffs, being attacked, loading screens), as all three projects
+  report. In between:
+  * **Client movement** (`aion2/movement.rs`): the client→server direction
+    of the game connection is framed the same way, if it is readable. Which
+    packet and offset carry the own position is *not documented anywhere*,
+    so nothing is assumed: float triplets in client packets are compared
+    with server-confirmed positions taken at the same moment, and a field is
+    adopted only after it matched at least four different confirmed
+    positions with at least 75 % hits. It is dropped again when the server
+    disagrees five times in a row. If the client traffic is encrypted,
+    nothing is ever adopted.
+  * **Range-edge estimate** (`aion2/edge.rs`): an object spawn (`34 36`)
+    that was not just created (its `created` time against the heartbeat
+    clock) and not part of a loading burst means the object just came
+    within its template's send radius; a removal with reason 01 means it
+    left. The radius per template and edge is the median of distances to
+    server-confirmed positions at the same moment. A Kalman filter (position
+    and velocity) combines these with the server fixes; objects still in
+    range or recently left bound the position. Each server fix is first
+    compared with the estimate; the panel shows the median error, and
+    estimates are not shown while it is above 25 m. Estimates carry their
+    1-sigma uncertainty, which the radar draws as a dashed circle.
+  * The game does not send which way you face; the radar's arrow shows the
+    direction you are moving.
 
 ## After a game patch
 

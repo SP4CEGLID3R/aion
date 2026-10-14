@@ -32,9 +32,9 @@
     },
     {
       "template": 1301199,
-      "zone": "Altgard?",
-      "status": "hypothesis",
-      "evidence": "One third-party source (Cube Watch test vector), not seen in a verified capture"
+      "zone": "Altgard",
+      "status": "verified",
+      "evidence": "Named by a third-party source (Cube Watch test vector); a marker of it led a user of this radar to a real hidden cube in Altgard on 2026-10-14"
     }
   ],
   "useHypotheses": false,
@@ -43,5 +43,14 @@
   "unitsPerMeter": 100,
   "north": "neg_y",
   "seenIntervalMs": 2000,
-  "streamTimeoutMs": 3000
+  "streamTimeoutMs": 3000,
+  "learnMovement": true,
+  "estimatePosition": true,
+  "_objectRadiiDoc": "Send radii (game units, planar) per object template, used until learned in game. Medians from aion2-cube-radar FINDINGS B8 (2026-10-13).",
+  "objectRadii": {
+    "1200039": { "enter": 10000 },
+    "1200041": { "enter": 10000 },
+    "1500000": { "enter": 10300, "leave": 11900 },
+    "1500004": { "enter": 5000, "leave": 6500 }
+  }
 }

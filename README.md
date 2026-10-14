@@ -18,21 +18,23 @@ Xvfb with no compositor, so the transparent area renders black; on Windows it
 is see-through.*
 
 > [!IMPORTANT]
-> **Live hidden cubes from the game: Verteron works, other zones are learned.**
+> **Live hidden cubes from the game: Verteron and Altgard.**
 > With *Packet capture* (Npcap) the radar reads the game's own traffic
 > passively and shows hidden cubes the server reports around you, roughly
-> within **100 m**. The packet layouts come from the
+> within **100 m** (the server sends nothing farther away). The packet
+> layouts come from the
 > [aion2-cube-radar](https://github.com/dennisreichenberg/aion2-cube-radar)
-> findings, re-implemented here and checked against its real captures (all
-> cubes and positions matched). Cube types in other zones are learned the
-> first time you open one with a key; for Altgard an unconfirmed type can be
-> switched on in Settings (shown as "Hidden Cube?"). Details, evidence and limits:
-> [docs/05-aion2-protocol.md](docs/05-aion2-protocol.md).
+> findings, re-implemented here and checked against its real captures. The
+> Altgard cube type was confirmed in game by a user of this radar. Cube types
+> in other zones are learned the first time you open one with a key.
+> Details, evidence and limits: [docs/05-aion2-protocol.md](docs/05-aion2-protocol.md).
 >
-> Not yet tried against the live game by this project. Verified for the
-> global client build 25800038; a patch can move opcodes (fixable in a JSON
-> file). Your own position only arrives with events such as your buffs, and
-> map north is assumed to be the game's −Y axis (switchable).
+> The server reports your own position only with events (opening your
+> wings, buffs). In between, the radar **follows you** with an estimate from
+> the objects entering and leaving the server's range around you, checked
+> against every server report and drawn with its uncertainty. Verified for
+> the global client build 25800038; a patch can move opcodes (fixable in a
+> JSON file).
 
 ## What it guarantees
 
@@ -61,8 +63,15 @@ the radar.
 * Transparent, borderless, resizable, always-on-top overlay that doesn't
   steal focus from the game. Optional **click-through**.
 * **Separate-window mode**: a normal framed window that does not stay on top.
-* Player marker with heading. Cube markers with labels and distances.
-  **Rim arrows** for live cubes beyond range.
+* Player marker with the direction you are moving. Cube markers with labels
+  and distances. **Rim arrows** for live cubes beyond range.
+* A **map grid fixed to the world** and your **path over the last minute**,
+  so the radar moves like a map as you walk. A dashed circle shows how sure
+  an estimated position is.
+* **Minimap overlay** style: markers only, for placing the window over the
+  game's minimap.
+* A **sound when a new cube appears**: a built-in chime or any sound file
+  you choose, with its own volume.
 * North-up or heading-up, extra rotation, range (scale), opacity, all colours.
 * Configurable **stale timeout**, and whether stale cubes are hidden or marked.
 * Rendering at display refresh rate, with the player interpolated between
@@ -179,12 +188,43 @@ file is kept as `settings.json.bak` and replaced with defaults.
 1. Install [Npcap](https://npcap.com) (default options).
 2. Settings → Data source → **Packet capture**, *All adapters*, decoder
    **AION 2 hidden cubes (built-in)** → Apply.
-3. Log in. The capture panel should show a *Game connection*, your zone and,
-   after a buff on yourself, your character.
-4. Hidden cubes within about 100 m appear on the radar. They disappear when
-   someone opens them and turn stale when you walk out of range.
-5. If the radar looks mirrored compared with the minimap, switch *Map north*
+3. Log in and **open your wings once**. The capture panel should show a
+   *Game connection*, your zone and your character.
+4. Hidden cubes within about 100 m appear on the radar, with a sound. They
+   disappear when someone opens them and turn stale when you walk out of range.
+5. Walk around. The radar follows you between server reports (see *Your
+   position* below). If it ever shows "Your position is N s old", open your
+   wings.
+6. If the radar looks mirrored compared with the minimap, switch *Map north*
    to +Y.
+
+### Your position
+
+The server sends your position only when something happens to you: opening
+your wings, a buff, being attacked, a loading screen. Between those, the
+radar uses, best first:
+
+1. **Your client's movement reports**, if it can read them. It looks for
+   them by itself, by matching the client's packets against the server's
+   reports. If the client's traffic is encrypted, this never kicks in.
+2. **An estimate from objects around you.** The server adds objects as they
+   come within a fixed distance of you and removes them as they fall behind,
+   with their positions. Each of those says "you are about R from here".
+   The distance R per object type is learned from moments when the server
+   did report your position. Every new server report also checks the
+   estimate; if the checks disagree, estimates are switched off. The capture
+   panel shows how far off the checks were.
+
+The first minutes in a new area are the learning phase, which goes faster
+the more often you open your wings or buff yourself. What it learns is saved
+to `aion2-learned.json` in the settings folder and used next time.
+
+### Cube sound
+
+Settings → *Cube alert*: on/off, volume, and a sound file. The built-in
+sound is a chime made by the app. No sound from any game is included, but
+if you have a sound file you like, such as a loot-filter drop sound, put
+its full path in the field and press *Test sound*.
 
 For zones or patches the built-in decoder doesn't know yet, the discovery
 tools are still there: recording, marker hotkeys (**Ctrl+Alt+V** cube
@@ -230,7 +270,7 @@ docs/                   research, architecture, protocol, data availability
 | 1. Inspect the DPS meter's architecture and license | Done: [docs/01-dps-meter-research.md](docs/01-dps-meter-research.md) |
 | 2. Working radar with synthetic cubes | Done |
 | 3. Coordinate transformations and unit tests | Done |
-| 4. Validated telemetry adapter | Done: passive capture with a built-in AION 2 cube decoder, checked against real captures from aion2-cube-radar ([evidence](docs/05-aion2-protocol.md)); not yet tried live in the game by this project |
+| 4. Validated telemetry adapter | Done: passive capture with a built-in AION 2 cube decoder, checked against real captures from aion2-cube-radar ([evidence](docs/05-aion2-protocol.md)); used live in Verteron and Altgard by a user |
 | 5. Verify game versions, document missing data | Done: [docs/03-data-availability.md](docs/03-data-availability.md) |
 | 6. Windows installer and build instructions | Config, CI job and instructions done. Not built on Windows in this environment |
 | 7. Live cube tracking, spawned cubes only | Done, with acceptance tests |

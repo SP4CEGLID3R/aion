@@ -54,6 +54,9 @@ pub struct CaptureConfig {
     pub decoder: DecoderChoice,
     /// Write a `.pcap` of the game connection(s) here.
     pub record_dir: Option<PathBuf>,
+    /// Keep what the AION 2 decoder learns (send radii, the movement field)
+    /// in this JSON file for the next session.
+    pub learned_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -128,6 +131,8 @@ struct Pipeline {
     recorder: Option<Recorder>,
     frames: u64,
     packets: u64,
+    learned_path: Option<PathBuf>,
+    learned_saved: Option<crate::aion2::Aion2Learned>,
 }
 
 /// Raw packets (capture time, IP bytes) held back per flow direction.
@@ -225,9 +230,11 @@ impl Pipeline {
                         .into(),
                 ),
                 Decoding::Aion2(_) => s.notes.push(
-                    "Hidden cubes are recognised in Verteron (verified templates). Other zones' \
-                     cube templates are learned when you open a cube with a key. Your own \
-                     position only arrives with events such as your buffs."
+                    "Hidden cubes are recognised in Verteron and Altgard. Other zones' cube \
+                     templates are learned when you open a cube with a key. The server reports \
+                     your position only with events (opening your wings, buffs); in between \
+                     the radar follows you from objects entering and leaving range, and from \
+                     your client's movement reports if it finds them."
                         .into(),
                 ),
                 Decoding::Profile(_) => {}
@@ -238,6 +245,8 @@ impl Pipeline {
             None => None,
         };
         Ok(Pipeline {
+            learned_path: cfg.learned_path.clone(),
+            learned_saved: None,
             streams: GameStreams::new(),
             census: Census::new(),
             decoder,
@@ -289,6 +298,11 @@ impl Pipeline {
                 StreamEvent::Gap { .. } => {
                     if let Decoding::Aion2(d) = &mut self.decoder {
                         out.extend(d.on_gap(t_out));
+                    }
+                }
+                StreamEvent::ClientFrame { frame, .. } => {
+                    if let Decoding::Aion2(d) = &mut self.decoder {
+                        out.extend(d.on_client_frame(&frame, t_out));
                     }
                 }
                 StreamEvent::Frame { frame, .. } => {
@@ -352,6 +366,28 @@ impl Pipeline {
         }
         if let Some(r) = &self.recorder {
             s.recording_bytes = r.writer.bytes_written();
+        }
+        drop(s);
+        self.save_learned();
+    }
+
+    /// Writes the decoder's learned values when they changed.
+    fn save_learned(&mut self) {
+        let (Decoding::Aion2(d), Some(path)) = (&self.decoder, &self.learned_path) else {
+            return;
+        };
+        let learned = d.learned();
+        if learned.is_empty() || self.learned_saved.as_ref() == Some(&learned) {
+            return;
+        }
+        let tmp = path.with_extension("json.tmp");
+        let text = serde_json::to_string_pretty(&learned).expect("serialisable");
+        match std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, path)) {
+            Ok(()) => {
+                log::info!("saved learned AION 2 values to {}", path.display());
+                self.learned_saved = Some(learned);
+            }
+            Err(e) => log::warn!("could not save {}: {e}", path.display()),
         }
     }
 }
@@ -600,6 +636,11 @@ pub fn process_records(
                 StreamEvent::Gap { .. } => {
                     if let Decoding::Aion2(d) = &mut decoder {
                         events.extend(d.on_gap(t));
+                    }
+                }
+                StreamEvent::ClientFrame { frame, .. } => {
+                    if let Decoding::Aion2(d) = &mut decoder {
+                        events.extend(d.on_client_frame(&frame, t));
                     }
                 }
                 StreamEvent::Frame { conn, t_ms, frame } => {

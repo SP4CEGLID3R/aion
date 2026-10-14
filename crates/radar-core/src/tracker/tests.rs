@@ -52,6 +52,7 @@ fn collect(id: &str, at: Millis) -> RadarEvent {
 
 fn player(x: f64, y: f64, at: Millis) -> RadarEvent {
     RadarEvent::Player(PlayerUpdate {
+        accuracy_m: None,
         pos: WorldPos::new(x, y, 0.0),
         heading_deg: Some(0.0),
         zone: None,
@@ -293,6 +294,7 @@ fn future_and_non_finite_events_are_rejected() {
         Outcome::Rejected(RejectReason::NonFinitePosition)
     );
     let bad_player = RadarEvent::Player(PlayerUpdate {
+        accuracy_m: None,
         pos: WorldPos::new(0.0, f64::INFINITY, 0.0),
         heading_deg: None,
         zone: None,
@@ -343,6 +345,7 @@ fn a_player_in_a_new_zone_implies_a_zone_change() {
     let mut t = tracker();
     let p = |zone: &str, at| {
         RadarEvent::Player(PlayerUpdate {
+            accuracy_m: None,
             pos: WorldPos::new(0.0, 0.0, 0.0),
             heading_deg: None,
             zone: Some(zone.into()),

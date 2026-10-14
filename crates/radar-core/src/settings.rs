@@ -30,6 +30,39 @@ pub enum WindowMode {
     Separate,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RadarStyle {
+    /// A disc with range rings, compass and a moving map grid.
+    #[default]
+    Radar,
+    /// Markers only, on a fully transparent background: for placing the
+    /// window over the game's own minimap at the same scale.
+    Minimap,
+}
+
+/// A sound when a new cube appears on the radar.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AlertSound {
+    pub enabled: bool,
+    /// 0 – 1.
+    pub volume: f64,
+    /// A sound file of your own (.wav, .mp3, .ogg, .flac); the built-in
+    /// chime when empty.
+    pub file: Option<String>,
+}
+
+impl Default for AlertSound {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            volume: 0.8,
+            file: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RadarColors {
@@ -184,6 +217,12 @@ pub struct RadarSettings {
     pub update_hz: u32,
     pub data_source: DataSourceConfig,
     pub coordinate_transform: CoordinateTransform,
+    pub style: RadarStyle,
+    /// A grid fixed to the world, so the map visibly moves as you do.
+    pub map_grid: bool,
+    /// Your path over the last minute.
+    pub show_trail: bool,
+    pub alert_sound: AlertSound,
 }
 
 impl Default for RadarSettings {
@@ -206,6 +245,10 @@ impl Default for RadarSettings {
             update_hz: 20,
             data_source: DataSourceConfig::default(),
             coordinate_transform: CoordinateTransform::default(),
+            style: RadarStyle::Radar,
+            map_grid: true,
+            show_trail: true,
+            alert_sound: AlertSound::default(),
         }
     }
 }
@@ -303,6 +346,23 @@ impl RadarSettings {
         fix("stale", &mut s.colors.stale, &dc.stale, &mut w);
         fix("label", &mut s.colors.label, &dc.label, &mut w);
         fix("indicator", &mut s.colors.indicator, &dc.indicator, &mut w);
+
+        let a = &mut s.alert_sound;
+        if !(a.volume.is_finite() && (0.0..=1.0).contains(&a.volume)) {
+            let c = if a.volume.is_finite() {
+                a.volume.clamp(0.0, 1.0)
+            } else {
+                0.8
+            };
+            w.push(format!(
+                "alertSound.volume {} is outside 0–1; using {c}",
+                a.volume
+            ));
+            a.volume = c;
+        }
+        if a.file.as_deref().is_some_and(|f| f.trim().is_empty()) {
+            a.file = None;
+        }
 
         if let Err(e) = s.coordinate_transform.validate() {
             w.push(format!("coordinateTransform invalid ({e}); using identity"));

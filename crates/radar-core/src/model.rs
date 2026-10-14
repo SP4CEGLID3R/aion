@@ -77,6 +77,9 @@ pub struct PlayerUpdate {
     pub heading_deg: Option<f64>,
     pub zone: Option<String>,
     pub observed_at: Millis,
+    /// 1-sigma uncertainty in metres when the position is estimated.
+    #[serde(default)]
+    pub accuracy_m: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

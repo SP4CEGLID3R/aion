@@ -372,6 +372,7 @@ fn build(rule: &MessageRule, (id, v): Values, t: Millis) -> Option<WireEvent> {
     let pos = || Some([finite(v[0])?, finite(v[1])?, finite(v[2]).unwrap_or(0.0)]);
     Some(match rule.event {
         RuleEvent::Player => WireEvent::Player {
+            accuracy: None,
             t,
             pos: pos()?,
             heading: finite(v[3]),

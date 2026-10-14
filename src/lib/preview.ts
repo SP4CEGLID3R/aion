@@ -25,7 +25,7 @@ export function startPreviewFrames(cb: (f: RadarFrame) => void, settings: () => 
     cb({
       generatedAt: now,
       zone: "preview",
-      player: { pos: { x: px, y: py, z: 0 }, headingDeg: heading, ageMs: 0, stale: false },
+      player: { pos: { x: px, y: py, z: 0 }, headingDeg: heading, ageMs: 0, stale: false, accuracyM: null },
       cubes: cubes
         .filter((c) => !c.stale || showStale)
         .map((c) => ({

@@ -135,6 +135,7 @@ fn record(a: &Args) -> Result<(), String> {
         },
         decoder: DecoderChoice::Aion2(Box::new(aion2_config(a)?)),
         record_dir: Some(dir),
+        learned_path: None,
     });
     let stop = Arc::new(AtomicBool::new(false));
     let stop2 = stop.clone();

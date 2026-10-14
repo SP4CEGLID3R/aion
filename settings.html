@@ -21,6 +21,13 @@
       <form id="form" autocomplete="off">
         <fieldset>
           <legend>Display</legend>
+          <label>Style
+            <select name="style">
+              <option value="radar">Radar — disc, rings, compass and a moving map grid</option>
+              <option value="minimap">Minimap overlay — cube markers only, to place over the game's minimap</option>
+            </select>
+          </label>
+          <p class="hint">Minimap overlay: put the radar window exactly over the game's minimap (top right), then set the range so the two scales match. The game's minimap is north-up, like the radar.</p>
           <label>Range (world units, centre to rim) <input name="range" type="number" min="5" max="10000" step="5" /></label>
           <label>Rotation
             <select name="rotationMode">
@@ -34,6 +41,18 @@
           <label class="check"><input name="showDistances" type="checkbox" /> Distances</label>
           <label class="check"><input name="showIndicators" type="checkbox" /> Direction arrows for cubes beyond range</label>
           <label class="check"><input name="showLegend" type="checkbox" /> Legend</label>
+          <label class="check"><input name="mapGrid" type="checkbox" /> Map grid fixed to the world (moves as you move)</label>
+          <label class="check"><input name="showTrail" type="checkbox" /> Your path over the last minute</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Cube alert</legend>
+          <label class="check"><input name="alertSound.enabled" type="checkbox" /> Play a sound when a new cube appears on the radar</label>
+          <label>Volume <input name="alertSound.volume" type="range" min="0" max="1" step="0.05" /></label>
+          <label>Sound file (.wav, .mp3, .ogg, .flac) <input name="alertSound.file" type="text" placeholder="empty = built-in chime" /></label>
+          <p class="hint">Want a particular drop sound, such as one from a loot filter? Save it as a file on your PC and put its full path here, for example C:\Users\you\Sounds\divine.mp3.</p>
+          <button type="button" id="test-sound">Test sound</button>
+          <span id="test-sound-result" class="hint"></span>
         </fieldset>
 
         <fieldset>
@@ -119,7 +138,7 @@
             <label>Adapter
               <select name="dataSource.device"><option value="">All adapters (find the game automatically)</option></select>
             </label>
-            <label class="check"><input name="dataSource.includeUnconfirmed" type="checkbox" /> Also show unconfirmed cube types (Altgard) — marked "Hidden Cube?"</label>
+            <label class="check"><input name="dataSource.includeUnconfirmed" type="checkbox" /> Also show unconfirmed cube types — marked "Hidden Cube?" (Verteron and Altgard are confirmed and always shown)</label>
             <label>Decoder profile (.json) <input name="dataSource.profilePath" type="text" placeholder="C:\path\to\aion2-profile.json" /></label>
             <label>Replay a capture file instead (.pcap / .pcapng) <input name="dataSource.file" type="text" placeholder="leave empty for live capture" /></label>
             <label class="check"><input name="dataSource.record" type="checkbox" /> Record the game connection and markers (for finding the cube packet)</label>

@@ -42,6 +42,14 @@ pub enum StreamEvent {
         conn: u64,
         t_ms: f64,
     },
+    /// A frame the game client sent to the server (the other direction of a
+    /// game connection). Framed by chain sync; it may carry the player's own
+    /// movement.
+    ClientFrame {
+        conn: u64,
+        t_ms: f64,
+        frame: Frame,
+    },
 }
 
 /// What is known about a flow, for deciding what to record.
@@ -83,6 +91,12 @@ enum State {
         conn: u64,
         framer: Framer,
     },
+    /// The client→server direction of a recognised game connection.
+    Client {
+        conn: u64,
+        framer: Framer,
+        started: bool,
+    },
     Ignored,
 }
 
@@ -99,6 +113,8 @@ pub struct StreamStats {
     pub flows: usize,
     pub game_streams: u64,
     pub gaps: u64,
+    /// Frames read from the client's own direction.
+    pub client_frames: u64,
     pub framing: FramingStats,
     pub current_stream: Option<String>,
 }
@@ -135,7 +151,7 @@ impl GameStreams {
         let of = |key: FlowKey| {
             self.flows.get(&key).map(|f| match f.state {
                 State::Probing { .. } => FlowKind::Probing,
-                State::Game { .. } => FlowKind::Game,
+                State::Game { .. } | State::Client { .. } => FlowKind::Game,
                 State::Ignored => FlowKind::Ignored,
             })
         };
@@ -158,16 +174,28 @@ impl GameStreams {
             if self.flows.len() >= MAX_FLOWS {
                 self.prune(t_ms, true);
             }
+            let reverse = FlowKey {
+                src: key.dst,
+                dst: key.src,
+            };
+            let state = match self.flows.get(&reverse).map(|f| &f.state) {
+                Some(State::Game { conn, .. }) => State::Client {
+                    conn: *conn,
+                    framer: Framer::chain_synced(),
+                    started: false,
+                },
+                _ => State::Probing {
+                    buf: Vec::new(),
+                    first_t: t_ms,
+                    heartbeats: 0,
+                    first_hb_t: None,
+                },
+            };
             self.flows.insert(
                 key,
                 Flow {
                     reasm: Reassembler::new(),
-                    state: State::Probing {
-                        buf: Vec::new(),
-                        first_t: t_ms,
-                        heartbeats: 0,
-                        first_hb_t: None,
-                    },
+                    state,
                     last_t: t_ms,
                 },
             );
@@ -197,6 +225,37 @@ impl GameStreams {
                     self.stats.gaps += 1;
                     framer.desync();
                     out.push(StreamEvent::Gap { conn: *conn, t_ms });
+                }
+                (
+                    State::Client {
+                        conn,
+                        framer,
+                        started,
+                    },
+                    Chunk::Data(d),
+                ) => {
+                    let conn = *conn;
+                    let frames = if *started {
+                        framer.feed(&d, t_ms)
+                    } else {
+                        *started = true;
+                        framer.start_chain(&d, flow.reasm.from_start, t_ms)
+                    };
+                    self.stats.client_frames += frames.len() as u64;
+                    out.extend(frames.into_iter().map(|frame| StreamEvent::ClientFrame {
+                        conn,
+                        t_ms,
+                        frame,
+                    }));
+                }
+                (
+                    State::Client {
+                        framer, started, ..
+                    },
+                    Chunk::Gap(_),
+                ) => {
+                    *started = true;
+                    framer.desync();
                 }
                 (
                     State::Probing {
@@ -281,6 +340,7 @@ impl GameStreams {
                     .into_iter()
                     .map(|frame| StreamEvent::Frame { conn, t_ms, frame }),
             );
+            out.extend(self.adopt_client_direction(key, conn, t_ms));
         } else if let State::Probing {
             first_t,
             heartbeats: 0,
@@ -299,6 +359,38 @@ impl GameStreams {
             self.prune(t_ms, false);
         }
         out
+    }
+
+    /// The game's server direction was just recognised: frame the client's
+    /// direction of the same connection too.
+    fn adopt_client_direction(
+        &mut self,
+        server: FlowKey,
+        conn: u64,
+        t_ms: f64,
+    ) -> Vec<StreamEvent> {
+        let reverse = FlowKey {
+            src: server.dst,
+            dst: server.src,
+        };
+        let Some(flow) = self.flows.get_mut(&reverse) else {
+            return Vec::new(); // created as a client flow on its first packet
+        };
+        let mut framer = Framer::chain_synced();
+        let frames = match std::mem::replace(&mut flow.state, State::Ignored) {
+            State::Probing { buf, .. } => framer.start_chain(&buf, flow.reasm.from_start, t_ms),
+            _ => framer.start_chain(&[], false, t_ms),
+        };
+        flow.state = State::Client {
+            conn,
+            framer,
+            started: true,
+        };
+        self.stats.client_frames += frames.len() as u64;
+        frames
+            .into_iter()
+            .map(|frame| StreamEvent::ClientFrame { conn, t_ms, frame })
+            .collect()
     }
 
     fn retire(&mut self, key: &FlowKey) {

@@ -24,6 +24,8 @@ pub struct PlayerView {
     pub age_ms: Millis,
     /// The player position is older than the stale timeout.
     pub stale: bool,
+    /// 1-sigma uncertainty in metres when the position is an estimate.
+    pub accuracy_m: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

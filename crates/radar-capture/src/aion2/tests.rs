@@ -76,37 +76,59 @@ fn dec() -> Aion2Decoder {
 const CUBE: [f32; 3] = [-50205.0, 126283.0, 15449.0];
 const ME: [f32; 3] = [-45000.0, 120000.0, 15000.0];
 
+/// A config with one extra, unconfirmed cube type.
+fn with_hypothesis(on: bool) -> Aion2Config {
+    let mut cfg = Aion2Config::builtin();
+    cfg.cube_templates.push(CubeTemplate {
+        template: 1_399_999,
+        zone: "Elsewhere?".into(),
+        status: TemplateStatus::Hypothesis,
+        evidence: "test".into(),
+    });
+    cfg.use_hypotheses = on;
+    cfg
+}
+
 #[test]
-fn builtin_config_is_valid_and_skips_hypotheses_by_default() {
+fn builtin_config_is_valid_and_knows_verteron_and_altgard() {
     let d = dec();
     assert!(d.is_cube_template(1_200_039));
     assert!(d.is_cube_template(1_200_041));
+    assert!(d.is_cube_template(1_301_199), "Altgard, confirmed in game");
+    let off = Aion2Decoder::new(with_hypothesis(false)).unwrap();
     assert!(
-        !d.is_cube_template(1_301_199),
-        "hypothesis templates are off by default"
+        !off.is_cube_template(1_399_999),
+        "hypotheses are off by default"
     );
-    let mut cfg = Aion2Config::builtin();
-    cfg.use_hypotheses = true;
-    assert!(Aion2Decoder::new(cfg).unwrap().is_cube_template(1_301_199));
+    let on = Aion2Decoder::new(with_hypothesis(true)).unwrap();
+    assert!(on.is_cube_template(1_399_999));
+}
+
+#[test]
+fn altgard_cubes_are_labelled_as_confirmed() {
+    let mut d = dec();
+    let ev = d.on_frame(&f([0x34, 0x36], spawn_body(5, 1_301_199, CUBE, 0)), 0);
+    let [WireEvent::CubeSpawned { label, .. }] = ev.as_slice() else {
+        panic!("{ev:?}")
+    };
+    assert_eq!(label.as_deref(), Some("Hidden Cube (Altgard)"));
 }
 
 #[test]
 fn unconfirmed_types_are_shown_only_when_asked_and_say_so() {
-    let mut cfg = Aion2Config::builtin();
-    cfg.use_hypotheses = true;
-    let mut d = Aion2Decoder::new(cfg).unwrap();
-    let ev = d.on_frame(&f([0x34, 0x36], spawn_body(5, 1_301_199, CUBE, 0)), 0);
+    let mut d = Aion2Decoder::new(with_hypothesis(true)).unwrap();
+    let ev = d.on_frame(&f([0x34, 0x36], spawn_body(5, 1_399_999, CUBE, 0)), 0);
     let [WireEvent::CubeSpawned { label, .. }] = ev.as_slice() else {
         panic!("{ev:?}")
     };
     assert_eq!(
         label.as_deref(),
-        Some("Hidden Cube? (Altgard, unconfirmed type)")
+        Some("Hidden Cube? (Elsewhere, unconfirmed type)")
     );
 
-    let mut off = dec();
+    let mut off = Aion2Decoder::new(with_hypothesis(false)).unwrap();
     assert!(off
-        .on_frame(&f([0x34, 0x36], spawn_body(5, 1_301_199, CUBE, 0)), 0)
+        .on_frame(&f([0x34, 0x36], spawn_body(5, 1_399_999, CUBE, 0)), 0)
         .is_empty());
 }
 
@@ -285,4 +307,147 @@ fn config_with_a_bad_opcode_is_refused() {
     let bad = DEFAULT_CONFIG_JSON.replace("\"objectSpawn\": \"3436\"", "\"objectSpawn\": \"34\"");
     assert!(Aion2Config::from_json(&bad).is_err());
     assert!(Aion2Config::from_json(DEFAULT_CONFIG_JSON).is_ok());
+}
+
+fn identified(id: u64) -> Aion2Decoder {
+    let mut d = dec();
+    let mut info = varint_bytes(id);
+    info.extend([0u8; 8]);
+    d.on_frame(&f([0x33, 0x36], info), 1);
+    d
+}
+
+/// Walking east at 5 m/s from ME.
+fn east(t: Millis) -> [f32; 3] {
+    [ME[0] + 0.5 * t as f32, ME[1], ME[2]]
+}
+
+#[test]
+fn between_server_fixes_the_position_is_estimated_from_objects_entering_range() {
+    let mut d = identified(9180);
+    let ev = d.on_frame(&f([0x2a, 0x38], buff_a_body(9180, ME)), 10);
+    assert!(matches!(ev[..], [WireEvent::Player { accuracy: None, .. }]));
+    assert_eq!(d.status(10).position_source, "server");
+
+    // Objects of a template with a known 50 m enter radius appear ahead of
+    // us, 50 m from where we really are, as we walk east.
+    let mut estimates = Vec::new();
+    for k in 0..24u64 {
+        let t = 500 + k as Millis * 250;
+        let me = east(t);
+        let a = (k as f32 * 37.0 % 120.0 - 60.0).to_radians(); // ahead, ±60°
+        let q = [me[0] + 5_000.0 * a.cos(), me[1] + 5_000.0 * a.sin(), me[2]];
+        let ev = d.on_frame(&f([0x34, 0x36], spawn_body(1_000 + k, 1_500_004, q, 0)), t);
+        for e in ev {
+            if let WireEvent::Player {
+                pos,
+                accuracy,
+                heading,
+                ..
+            } = e
+            {
+                estimates.push((t, pos, accuracy, heading));
+            }
+        }
+    }
+    assert!(estimates.len() > 10, "{estimates:?}");
+    let (t, pos, accuracy, heading) = *estimates.last().unwrap();
+    let truth = d.to_world(east(t));
+    let err = (pos[0] - truth[0]).hypot(pos[1] - truth[1]);
+    assert!(err < 6.0, "error {err} m at {t}: {pos:?} vs {truth:?}");
+    assert!(accuracy.is_some_and(|a| a < 15.0), "{accuracy:?}");
+    // Moving east: the heading comes from the direction of travel.
+    let h = heading.expect("heading from motion");
+    assert!((h - 90.0).abs() < 25.0, "{h}");
+    let st = d.status(t);
+    assert_eq!(st.position_source, "estimate");
+    assert!(st.estimate.range_updates > 10);
+    // Between events, a tick moves the estimate on.
+    assert!(d.tick(t + 400).iter().any(|e| matches!(
+        e,
+        WireEvent::Player {
+            accuracy: Some(_),
+            ..
+        }
+    )));
+}
+
+#[test]
+fn freshly_created_objects_say_nothing_about_where_we_are() {
+    let mut d = identified(9180);
+    // Server clock from a heartbeat.
+    let now_ms: i64 = 1_791_883_623_000;
+    d.on_frame(&f([0x00, 0x36], now_ms.to_le_bytes().to_vec()), 0);
+    d.on_frame(&f([0x2a, 0x38], buff_a_body(9180, ME)), 10);
+    for k in 0..10u64 {
+        let t = 500 + k as Millis * 250;
+        let q = [ME[0] + 5_000.0, ME[1] + k as f32 * 300.0, ME[2]];
+        // Created 1 s ago: it appeared, it did not come into range.
+        let created = now_ms + t - 1_000;
+        let ev = d.on_frame(
+            &f([0x34, 0x36], spawn_body(2_000 + k, 1_500_004, q, created)),
+            t,
+        );
+        assert!(ev.is_empty(), "{ev:?}");
+    }
+    assert_eq!(d.status(3_000).estimate.range_updates, 0);
+}
+
+#[test]
+fn client_movement_reports_drive_the_position_once_learned() {
+    let mut cfg = Aion2Config::builtin();
+    cfg.own_movement = Some(MoveSource {
+        opcode: "557a".into(),
+        anchor: Anchor::End,
+        offset: 14,
+    });
+    let mut d = Aion2Decoder::new(cfg).unwrap();
+    let mut payload = vec![0x55, 0x7a, 0x01];
+    payload.extend(xyz(east(1_000)));
+    payload.extend([0x10, 0x00]);
+    let frame = Frame {
+        opcode: [0x55, 0x7a],
+        payload,
+        bundled: false,
+    };
+    let ev = d.on_client_frame(&frame, 1_000);
+    let [WireEvent::Player {
+        pos,
+        accuracy: None,
+        ..
+    }] = ev.as_slice()
+    else {
+        panic!("{ev:?}")
+    };
+    assert_eq!(*pos, d.to_world(east(1_000)));
+    let st = d.status(1_000);
+    assert_eq!(st.position_source, "client");
+    assert_eq!(st.movement.state, "found");
+}
+
+#[test]
+fn learned_radii_and_movement_are_kept_for_the_next_session() {
+    let mut d = identified(9180);
+    // Fixes every 250 ms while objects of an unknown template enter 42 m away.
+    for k in 0..6u64 {
+        let t = 1_000 + k as Millis * 250;
+        let me = east(t);
+        d.on_frame(&f([0x2a, 0x38], buff_a_body(9180, me)), t);
+        let q = [me[0], me[1] + 4_200.0, me[2]];
+        d.on_frame(&f([0x34, 0x36], spawn_body(3_000 + k, 1_234_567, q, 0)), t);
+    }
+    let learned = d.learned();
+    let r = learned.object_radii["1234567"];
+    assert!((r.enter.unwrap() - 4_200.0).abs() < 1.0, "{r:?}");
+    // The built-in seeds are not written out as if measured.
+    assert!(!learned.object_radii.contains_key("1500004"));
+
+    let mut cfg = Aion2Config::builtin();
+    cfg.apply_learned(&learned);
+    assert_eq!(cfg.object_radii["1234567"].enter, r.enter);
+    let text = serde_json::to_string(&learned).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Aion2Learned>(&text).unwrap(),
+        learned
+    );
 }

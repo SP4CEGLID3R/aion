@@ -8,7 +8,7 @@ mod store;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use radar_capture::aion2::North;
+use radar_capture::aion2::{Aion2Learned, North};
 use radar_capture::live::{Device, PcapApi};
 use radar_capture::{
     Aion2Config, CaptureConfig, CaptureInput, CaptureSource, CaptureStatus, DecoderChoice,
@@ -30,6 +30,13 @@ const SETTINGS: &str = "settings";
 const FRAME_EVENT: &str = "radar-frame";
 const SETTINGS_EVENT: &str = "settings-changed";
 const MARKER_EVENT: &str = "capture-marker";
+/// WebView2 defaults (kept, see wry) plus autoplay, so the cube alert can
+/// sound without a click in the radar first. Both windows must use the same
+/// arguments, as they share a data directory.
+const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+                            --autoplay-policy=no-user-gesture-required";
+/// Largest sound file the alert will load.
+const MAX_SOUND_BYTES: u64 = 10 * 1024 * 1024;
 
 struct Inner {
     settings: RadarSettings,
@@ -95,6 +102,7 @@ fn capture_source(
     let decoder = match decoder {
         CaptureDecoder::Aion2 => {
             let mut config = aion2_config(&paths.config_dir, warnings);
+            config.apply_learned(&aion2_learned(&paths.config_dir));
             config.use_hypotheses |= *include_unconfirmed;
             config.north = match north {
                 CaptureNorth::NegY => North::NegY,
@@ -137,6 +145,7 @@ fn capture_source(
         input,
         decoder,
         record_dir: record.then(|| paths.recordings.clone()),
+        learned_path: Some(paths.config_dir.join(LEARNED_FILE)),
     });
     Some((Box::new(source), status))
 }
@@ -160,6 +169,20 @@ fn aion2_config(config_dir: &Path, warnings: &mut Vec<String>) -> Aion2Config {
             }
         },
         Err(_) => Aion2Config::builtin(),
+    }
+}
+
+/// What the decoder learned in game (send radii, the movement field).
+const LEARNED_FILE: &str = "aion2-learned.json";
+
+fn aion2_learned(config_dir: &Path) -> Aion2Learned {
+    let path = config_dir.join(LEARNED_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
+            log::warn!("ignoring {}: {e}", path.display());
+            Aion2Learned::default()
+        }),
+        Err(_) => Aion2Learned::default(),
     }
 }
 
@@ -235,6 +258,7 @@ fn create_radar_window(app: &AppHandle, s: &RadarSettings) -> tauri::Result<Webv
         .shadow(!overlay)
         // Do not take the keyboard from the game when the overlay appears.
         .focused(false)
+        .additional_browser_args(BROWSER_ARGS)
         .build()?;
     apply_window_mode(&window, s);
     Ok(window)
@@ -250,6 +274,7 @@ fn show_settings_window(app: &AppHandle) -> tauri::Result<()> {
         .title("Cube Radar — Settings")
         .inner_size(720.0, 760.0)
         .min_inner_size(420.0, 360.0)
+        .additional_browser_args(BROWSER_ARGS)
         .build()?;
     Ok(())
 }
@@ -331,6 +356,30 @@ fn add_capture_marker(
     kind: String,
 ) -> Result<usize, String> {
     mark(&app, &state, &kind)
+}
+
+/// The bytes of a sound file the user chose for the cube alert. Only audio
+/// files, and only up to `MAX_SOUND_BYTES`.
+#[tauri::command]
+fn read_sound_file(path: String) -> Result<tauri::ipc::Response, String> {
+    let p = Path::new(path.trim());
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if !matches!(ext.as_str(), "wav" | "mp3" | "ogg" | "flac" | "m4a") {
+        return Err("choose a .wav, .mp3, .ogg, .flac or .m4a file".into());
+    }
+    let meta = std::fs::metadata(p).map_err(|e| format!("{}: {e}", p.display()))?;
+    if !meta.is_file() || meta.len() > MAX_SOUND_BYTES {
+        return Err(format!(
+            "{} is not a sound file of at most 10 MB",
+            p.display()
+        ));
+    }
+    let bytes = std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[tauri::command]
@@ -469,7 +518,8 @@ pub fn run() {
             list_capture_devices,
             get_capture_status,
             add_capture_marker,
-            get_recordings_dir
+            get_recordings_dir,
+            read_sound_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running the radar");

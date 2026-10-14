@@ -29,6 +29,7 @@ export interface Backend {
   addCaptureMarker(kind: string): Promise<number>;
   getRecordingsDir(): Promise<string>;
   onMarker(cb: (message: string) => void): Promise<UnlistenFn>;
+  readSoundFile(path: string): Promise<ArrayBuffer>;
 }
 
 export const FRAME_EVENT = "radar-frame";
@@ -53,6 +54,7 @@ const tauriBackend: Backend = {
   addCaptureMarker: (kind) => invoke<number>("add_capture_marker", { kind }),
   getRecordingsDir: () => invoke<string>("get_recordings_dir"),
   onMarker: (cb) => listen<string>(MARKER_EVENT, (e) => cb(e.payload)),
+  readSoundFile: (path) => invoke<ArrayBuffer>("read_sound_file", { path }),
 };
 
 const PREVIEW_KEY = "aion2-radar-preview-settings";
@@ -93,6 +95,9 @@ function previewBackend(): Backend {
     },
     getRecordingsDir: async () => "(desktop app only)",
     onMarker: async () => () => {},
+    readSoundFile: async () => {
+      throw new Error("Sound files can be loaded only in the desktop app.");
+    },
     onSettings: async (cb) => {
       listeners.add(cb);
       const onStorage = (e: StorageEvent) => e.key === PREVIEW_KEY && cb(load());

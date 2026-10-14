@@ -62,6 +62,10 @@ pub enum WireEvent {
         heading: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         zone: Option<String>,
+        /// How far off the position may be (1 sigma, source units), when the
+        /// position is an estimate rather than a report.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        accuracy: Option<f64>,
     },
     CubeSpawned {
         t: Millis,

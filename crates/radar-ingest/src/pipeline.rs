@@ -325,6 +325,7 @@ mod tests {
         let t = now_ms();
         let events = vec![
             WireEvent::Player {
+                accuracy: None,
                 t,
                 pos: [0.0; 3],
                 heading: None,

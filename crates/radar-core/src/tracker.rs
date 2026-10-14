@@ -486,6 +486,7 @@ impl Tracker {
             heading_deg: p.heading_deg,
             age_ms: now - p.observed_at,
             stale: now - p.observed_at > timeout,
+            accuracy_m: p.accuracy_m,
         });
 
         let mut stats = FrameStats {

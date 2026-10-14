@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { backend } from "./lib/bridge";
 import { lerp, lerpAngleDeg, viewUpDeg, type View } from "./lib/projection";
 import { drawScene } from "./lib/renderer";
+import { AlertGate, playAlert } from "./lib/sound";
 import { DEFAULT_SETTINGS, type RadarFrame, type RadarSettings, type WorldPos } from "./lib/types";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#radar")!;
@@ -21,6 +22,35 @@ let settings: RadarSettings = DEFAULT_SETTINGS;
 let prev: { frame: RadarFrame; at: number } | null = null;
 let cur: { frame: RadarFrame; at: number } | null = null;
 let size = { w: 0, h: 0, dpr: 1 };
+const alertGate = new AlertGate();
+
+/** Own positions of the last minute, for the trail. */
+const TRAIL_MS = 60_000;
+let trail: { at: number; pos: WorldPos }[] = [];
+let trailZone: string | null = null;
+
+function recordTrail(frame: RadarFrame, now: number): void {
+  if (frame.zone !== trailZone) {
+    trailZone = frame.zone;
+    trail = [];
+  }
+  const p = frame.player?.pos;
+  if (!p) return;
+  const last = trail[trail.length - 1];
+  const moved = last ? Math.hypot(p.x - last.pos.x, p.y - last.pos.y) : Infinity;
+  // A jump this far is a teleport, not a walk: start a new trail.
+  if (moved > 300) trail = [];
+  if (moved >= 1 || !last) trail.push({ at: now, pos: p });
+  while (trail.length > 0 && now - trail[0]!.at > TRAIL_MS) trail.shift();
+  if (trail.length > 600) trail.splice(0, trail.length - 600);
+}
+
+function maybeAlert(frame: RadarFrame, now: number): void {
+  const live = frame.cubes.filter((c) => c.state === "SPAWNED").map((c) => c.id);
+  if (alertGate.check(frame.zone, live, now) && settings.alertSound.enabled) {
+    playAlert(settings.alertSound).catch((e) => console.error("alert", e));
+  }
+}
 
 function applySettings(s: RadarSettings): void {
   settings = s;
@@ -84,6 +114,8 @@ function render(): void {
       headingDeg: pose.heading,
       cubes: backendSilent || !frame ? [] : frame.cubes,
       view,
+      accuracyM: backendSilent ? null : (frame?.player?.accuracyM ?? null),
+      trail: trail.map((t) => t.pos).concat(pose.pos ? [pose.pos] : []),
     },
     size.w,
     size.h,
@@ -104,7 +136,7 @@ function bannerText(frame: RadarFrame | null, backendSilent: boolean): string | 
   }
   if (frame.player.stale) {
     const age = Math.round(frame.player.ageMs / 1000);
-    return `Your position is ${age} s old — the game sends it only with events like your buffs`;
+    return `Your position is ${age} s old — open your wings to update the position`;
   }
   if (src?.state === "finished") return "Replay finished";
   return null;
@@ -116,6 +148,7 @@ function updateStatus(frame: RadarFrame): void {
     `${frame.stats.spawned} live`,
     frame.stats.stale ? `${frame.stats.stale} stale` : null,
     frame.zone ? `zone ${frame.zone}` : null,
+    frame.player?.accuracyM ? `position estimated ±${Math.max(1, Math.round(frame.player.accuracyM))} m` : null,
     src ? `${src.name} (${src.state})` : null,
   ].filter(Boolean);
   const text = parts.join(" · ");
@@ -144,6 +177,8 @@ async function main(): Promise<void> {
     prev = cur;
     cur = { frame, at: performance.now() };
     updateStatus(frame);
+    recordTrail(frame, cur.at);
+    maybeAlert(frame, cur.at);
   });
 
   let toastTimer = 0;
