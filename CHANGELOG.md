@@ -44,6 +44,11 @@ how far it is and whether it is up or down.
   themselves.
 - Reading the client's own movement packets is off by default: the game
   encrypts what the client sends.
+- Choosing the game's network traffic in Settings now says, right there, that
+  such tools may be against AION 2's terms of service and can get an account
+  banned. The made-up demo stays the default until you choose.
+- Before your first position the radar says to open your wings once; without
+  Npcap it says to install it and restart the radar.
 
 ### Fixed
 

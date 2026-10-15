@@ -193,6 +193,11 @@ function bannerText(frame: RadarFrame | null, backendSilent: boolean): string | 
   if (src?.state === "disabled") return "No data source configured";
   if (!frame.player) {
     if (src?.state === "waiting") return `Waiting for telemetry — ${src.detail}`;
+    // Live capture: the server reports your own position only with events,
+    // and opening the wings is the one a player can do at any time.
+    if (src?.state === "connected" && /^Packet capture/.test(src.name) && !/census only/.test(src.detail)) {
+      return "Waiting for your position — open your wings once in the game";
+    }
     return src?.detail ? `Waiting for player position — ${src.detail}` : "Waiting for player position";
   }
   if (frame.player.stale) {

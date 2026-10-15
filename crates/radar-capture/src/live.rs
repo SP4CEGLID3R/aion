@@ -27,7 +27,7 @@ const IF_LOOPBACK: c_uint = 0x1;
 pub enum CaptureError {
     #[error(
         "packet capture library not found ({0}). On Windows install Npcap from https://npcap.com \
-         (keep \"WinPcap API-compatible mode\" either way; both locations are tried)"
+         (default options), then restart the radar"
     )]
     NoLibrary(String),
     #[error("{0}")]

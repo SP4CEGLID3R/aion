@@ -218,7 +218,7 @@ file is kept as `settings.json.bak` and replaced with defaults.
 6. If the radar looks mirrored compared with the minimap, switch *Map north*
    to +Y (*More settings → Game traffic*).
 
-<img src="docs/images/settings.png" width="420" alt="The settings window: Game (cubes come from the game's network traffic), Your position (minimap preview and 'Following you ✓'), Finding cubes (arrow, new-cube sound, soft beeps with their volumes), Radar">
+<img src="docs/images/settings.png" width="420" alt="The settings window: Game (cubes come from the game's network traffic, with the note that this may be against the game's terms of service), Your position (minimap preview and 'Following you ✓'), Finding cubes (arrow, new-cube sound, soft beeps with their volumes), Radar">
 
 ### Your position
 
