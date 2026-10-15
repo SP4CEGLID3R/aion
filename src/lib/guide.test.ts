@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   beepInterval,
   heightCue,
-  heightShort,
   heightText,
   isHere,
   nearestLive,
@@ -62,15 +61,13 @@ describe("guide", () => {
     expect(heightText(heightCue(-5, 0.5))).toBe("▼ 5 m down");
     expect(heightText(heightCue(0, 0.5))).toBe("same height");
     expect(heightText(heightCue(6, 4))).toBeNull();
-    expect(heightShort(heightCue(-5, null))).toBe("▼5");
-    expect(heightShort(heightCue(0, null))).toBeNull();
   });
 
   it("says the cube is here when the arrow can no longer point well", () => {
     expect(isHere(4, null)).toBe(true);
-    expect(isHere(8, 1)).toBe(false);
+    expect(isHere(6, 1)).toBe(false);
     expect(isHere(8, 5)).toBe(true); // ±5 m: 8 m away is as good as here
-    expect(isHere(20, 30)).toBe(false); // but never further than 15 m
+    expect(isHere(9, 30)).toBe(false); // but never further than 8 m
   });
 
   it("beeps a little faster as you get closer, from 30 m, never frantically", () => {
@@ -98,17 +95,17 @@ describe("guide", () => {
     // A new cube 25 m away: its alert chime is enough while you stand still.
     expect(run(0, 12_000, () => 25)).toEqual([]);
     // Walking towards it at 5 m/s: beeps all the way, then one "arrived".
-    const walk = run(12_000, 16_000, (t) => 25 - ((t - 12_000) / 1000) * 5);
+    const walk = run(12_000, 16_600, (t) => 25 - ((t - 12_000) / 1000) * 5);
     expect(walk.filter((x) => x === "near").length).toBeGreaterThanOrEqual(4);
     expect(walk.filter((x) => x === "arrived")).toEqual(["arrived"]);
     // Searching right next to it: quiet.
-    expect(run(16_000, 40_000, () => 3)).toEqual([]);
+    expect(run(16_600, 40_000, () => 2)).toEqual([]);
     // Walking off, coming halfway back and stopping: quiet 4 s later.
-    expect(run(40_000, 43_000, (t) => 3 + ((t - 40_000) / 1000) * 5)).toEqual([]);
-    expect(run(43_000, 44_000, (t) => 18 - ((t - 43_000) / 1000) * 5)).toContain("near");
+    expect(run(40_000, 43_000, (t) => 2 + ((t - 40_000) / 1000) * 5)).toEqual([]);
+    expect(run(43_000, 44_000, (t) => 17 - ((t - 43_000) / 1000) * 5)).toContain("near");
     expect(run(48_100, 56_000, () => 13)).toEqual([]);
     // Coming the rest of the way: "arrived" again.
-    const back = run(56_000, 59_000, (t) => 13 - ((t - 56_000) / 1000) * 5);
+    const back = run(56_000, 58_400, (t) => 12 - ((t - 56_000) / 1000) * 5);
     expect(back).toContain("near");
     expect(back.filter((x) => x === "arrived")).toEqual(["arrived"]);
     // No cube, or no current position: silent.

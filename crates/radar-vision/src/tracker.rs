@@ -7,6 +7,12 @@
 //! frame is tried; if that fails too, the track breaks and a new segment
 //! starts (positions of different segments are not comparable). This follows
 //! the design of madara134/aion2-cube-finder's minimap tracker (MIT).
+//!
+//! Picking up again: the last good view of each recent healthy segment is
+//! kept. When the track breaks or the minimap comes back after being covered
+//! (the big map, a dialog, a black frame), the new view is matched against
+//! those; if it shows the same place, the old segment simply continues (same
+//! number, continuous position), so nothing has to re-anchor it.
 
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -41,6 +47,16 @@ pub const RIDGE: f64 = 0.065;
 /// Range ring: sampled every 10th frame, measured every 50th.
 const RING_SAMPLE_EVERY: u64 = 10;
 const RING_EVERY: u64 = 50;
+/// Picking an old segment up again: how many recent segments are kept, for
+/// how long, how long a new segment keeps trying, how many good matches make
+/// a segment worth keeping, and how clear the match must be (stricter than
+/// frame to frame: a wrong pick would put the player somewhere else).
+const RESUME_KEEP: usize = 3;
+const RESUME_WITHIN_MS: Millis = 120_000;
+const RESUME_TRY_MS: Millis = 10_000;
+const RESUME_HEALTHY: u64 = 10;
+const RESUME_PEAK: f64 = 0.6;
+const RESUME_MARGIN: f64 = 0.08;
 
 #[derive(Debug, Clone)]
 pub struct TrackerConfig {
@@ -105,16 +121,25 @@ pub struct TrackerStats {
     pub good: u64,
     pub fallback: u64,
     pub breaks: u64,
+    /// Old segments picked up again after a break or a covered minimap.
+    pub resumed: u64,
     pub cone_checks: u64,
     pub cone_clear: u64,
     /// Time the last frame took, milliseconds.
     pub last_ms: f64,
 }
 
+#[derive(Clone)]
 struct Key {
     spec: Rc<Spectra>,
     pos: (f64, f64),
     t: Millis,
+}
+
+/// The last good view of a segment that broke off.
+struct Lost {
+    key: Key,
+    seg: i64,
 }
 
 pub struct MinimapTracker {
@@ -135,6 +160,13 @@ pub struct MinimapTracker {
     ring_planes: VecDeque<Plane>,
     n: u64,
     seg: i64,
+    /// Segment numbers are never reused (a resumed one keeps its own).
+    next_seg: i64,
+    /// Good matches in the current segment, and until when it may still be
+    /// replaced by an older one it shows the same place as.
+    seg_good: u64,
+    try_until: Millis,
+    lost: VecDeque<Lost>,
     key: Option<Key>,
     prev: Option<Key>,
     last: Option<(f64, f64)>,
@@ -192,6 +224,10 @@ impl MinimapTracker {
             ring_planes: VecDeque::new(),
             n: 0,
             seg: -1,
+            next_seg: 0,
+            seg_good: 0,
+            try_until: Millis::MIN,
+            lost: VecDeque::new(),
             key: None,
             prev: None,
             last: None,
@@ -266,7 +302,10 @@ impl MinimapTracker {
     }
 
     fn restart(&mut self, spec: Rc<Spectra>, t: Millis) -> (f64, f64) {
-        self.seg += 1;
+        self.seg = self.next_seg;
+        self.next_seg += 1;
+        self.seg_good = 0;
+        self.try_until = t + RESUME_TRY_MS;
         let pos = self.last.unwrap_or((0.0, 0.0));
         self.key = Some(Key {
             spec: spec.clone(),
@@ -276,6 +315,52 @@ impl MinimapTracker {
         self.prev = Some(Key { spec, pos, t });
         self.last = Some(pos);
         pos
+    }
+
+    /// Keeps the current segment's last good view, if it tracked well.
+    fn remember(&mut self) {
+        if self.seg_good < RESUME_HEALTHY {
+            return;
+        }
+        if let Some(prev) = self.prev.clone() {
+            self.lost.retain(|l| l.seg != self.seg);
+            self.lost.push_front(Lost {
+                key: prev,
+                seg: self.seg,
+            });
+            self.lost.truncate(RESUME_KEEP);
+        }
+    }
+
+    /// The view shows a place a recent segment saw: continue that segment.
+    fn resume(&mut self, spec: &Rc<Spectra>, t: Millis) -> Option<Step> {
+        self.lost.retain(|l| t - l.key.t <= RESUME_WITHIN_MS);
+        let current = self.seg;
+        let found = self.lost.iter().enumerate().find_map(|(i, l)| {
+            if l.seg == current {
+                return None; // just broke off: it was tried as the fallback
+            }
+            let s = self.cor.shift(&l.key.spec, spec);
+            (s.good() && s.peak >= RESUME_PEAK && s.margin >= RESUME_MARGIN).then_some((i, s))
+        });
+        let (i, shift) = found?;
+        let l = self.lost.remove(i).expect("found above");
+        let ds = self.ds as f64;
+        let pos = (l.key.pos.0 - shift.dx * ds, l.key.pos.1 - shift.dy * ds);
+        self.seg = l.seg;
+        self.seg_good = RESUME_HEALTHY;
+        self.try_until = Millis::MIN;
+        self.key = Some(Key {
+            spec: spec.clone(),
+            pos,
+            t,
+        });
+        self.prev = self.key.clone();
+        self.last = Some(pos);
+        self.stats.resumed += 1;
+        let mut s = self.step_result(t, Some(pos), true, false, shift.peak);
+        s.roundness = shift.roundness;
+        Some(s)
     }
 
     fn step_result(
@@ -329,6 +414,7 @@ impl MinimapTracker {
         self.stats.frames += 1;
         if frame.w != self.full_w || frame.h != self.full_h {
             // A different size is a different minimap: start over.
+            self.lost.clear();
             self.key = None;
             self.prev = None;
             let mut s = self.step_result(t, None, false, true, 0.0);
@@ -338,6 +424,9 @@ impl MinimapTracker {
         let (mean, std) = frame.stats();
         if mean < BLACK_MEAN && std < BLACK_STD {
             self.stats.black += 1;
+            if self.key.is_some() {
+                self.remember();
+            }
             self.key = None;
             self.prev = None;
             let mut s = self.step_result(t, None, false, true, 0.0);
@@ -390,6 +479,14 @@ impl MinimapTracker {
             .erode(1);
         let spec = Rc::new(self.cor.spectra(&small, &mask));
 
+        // Back after a black frame, or a young segment: the same place as a
+        // segment that broke off?
+        if self.key.is_none() || t <= self.try_until {
+            if let Some(mut s) = self.resume(&spec, t) {
+                s.ring_r = ring_new;
+                return s;
+            }
+        }
         let Some(key) = self.key.as_ref() else {
             let pos = self.restart(spec, t);
             let mut s = self.step_result(t, Some(pos), false, false, 1.0);
@@ -418,12 +515,18 @@ impl MinimapTracker {
         }
         if !shift.good() {
             self.stats.breaks += 1;
+            self.remember();
+            if let Some(mut s) = self.resume(&spec, t) {
+                s.ring_r = ring_new;
+                return s;
+            }
             let pos = self.restart(spec, t);
             let mut s = self.step_result(t, Some(pos), false, true, shift.peak);
             s.ring_r = ring_new;
             return s;
         }
         self.stats.good += 1;
+        self.seg_good += 1;
         let ds = self.ds as f64;
         let pos = (base.0 .0 - shift.dx * ds, base.0 .1 - shift.dy * ds);
         self.last = Some(pos);

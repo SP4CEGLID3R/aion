@@ -174,7 +174,6 @@ function render(): void {
       cubes: backendSilent || !frame ? [] : frame.cubes,
       view,
       accuracyM: backendSilent ? null : (frame?.player?.accuracyM ?? null),
-      heightAccuracyM: frame?.player?.heightAccuracyM ?? null,
       trail: trail.map((t) => t.pos).concat(pose.pos ? [pose.pos] : []),
       background: backendSilent ? null : background,
     },
@@ -206,12 +205,12 @@ function bannerText(frame: RadarFrame | null, backendSilent: boolean): string | 
 
 function updateStatus(frame: RadarFrame): void {
   const src = frame.source;
+  const n = frame.stats.spawned;
   const parts = [
-    `${frame.stats.spawned} live`,
-    frame.stats.stale ? `${frame.stats.stale} stale` : null,
-    frame.zone ? `zone ${frame.zone}` : null,
+    n === 0 ? "no cubes nearby" : n === 1 ? "1 cube" : `${n} cubes`,
     frame.player?.accuracyM ? `position ±${Math.max(1, Math.round(frame.player.accuracyM))} m` : null,
-    src ? `${src.name} (${src.state})` : null,
+    // The source only when something is off with it.
+    src && src.state !== "connected" ? `${src.name} (${src.state})` : null,
   ].filter(Boolean);
   const text = parts.join(" · ");
   if (statusEl.textContent !== text) statusEl.textContent = text;

@@ -69,11 +69,9 @@ the radar.
 * **Minimap tracking**: follows you between server reports by reading the
   in-game minimap from the screen; the live minimap can be drawn behind the
   radar.
-* **Guide arrows** to the nearest live cube: on a ring around your marker on
-  the radar, and around your character in the game view (turning with the
-  camera), saying how far and whether it is **up or down**; a green
-  *CUBE HERE* circle when you are on top of it, and optional soft beeps as
-  you get closer.
+* **An arrow around your character** in the game view, to the nearest live
+  cube (turning with the camera), saying how far and whether it is **up or
+  down**, updated 10 times a second; quiet beeps as you get closer.
 * A **map grid fixed to the world** and your **path over the last minute**,
   so the radar moves like a map as you walk. A dashed circle shows how sure
   an estimated position is.
@@ -231,11 +229,10 @@ radar uses, best first:
    * Run the game in **borderless or windowed** mode (exclusive fullscreen
      shows up black).
    * The minimap's default spot is found automatically. If you moved or
-     resized it (Edit HUD), use Settings → *Minimap tracking* → **Pick the
+     resized it (Edit HUD), use Settings → *Your position* → **Pick the
      minimap on screen…**; the preview there shows what is being read.
    * The status line says what it is doing, for example "Open your wings
-     once so the radar knows where you are" or "Following you (scale
-     confirmed)".
+     once so the radar knows where you are" or "Following you ✓".
 2. **An estimate from objects around you**, when the minimap is hidden or
    unclear. The server adds objects as they come within a fixed distance of
    you and removes them as they fall behind; each says "you are about R from
@@ -250,29 +247,28 @@ touches). What is learned (minimap scale, object distances) is saved to
 
 ### Guide arrows
 
-Settings → *Cube guide*. On the radar, an arrow on a small ring around your
-marker points at the nearest live cube. Over the game, a ring around your
-character does the same, turned with the camera so that "up" is where you
-look, with a label: how far, and whether the cube is **up or down**
-(▲ 12 m up, ▼ 5 m down, same height). Radar labels show it too (▲12).
-If the ring sits too high or low, adjust *Character on screen* (fractions
-of the screen).
+Settings → *Finding cubes*. Over the game, a ring around your character
+with an arrow to the nearest live cube, turned with the camera so that
+"ahead" is where you look, and a label: how far, and whether the cube is
+**up or down** (▲ 12 m up, ▼ 5 m down, same height). Within a few metres
+the arrow gives way to "right here" and where to look (▲ look up · 8 m).
+The radar itself stays clean: the map, you, and the cubes with their
+distances. If the ring is not around your character, adjust it under
+*More settings → Arrow over the game*.
 
-* **Up or down.** The server sends each cube's exact height. Your own height
-  is exact right after the server reports your position (opening your wings,
-  a buff, a loading screen); the minimap only tracks you across the map, so
-  the further you go from that spot, the less sure it is (allowing for
-  ground rising or falling by up to 1 m in 5). The arrow only says up or
-  down when the difference is clearly bigger than that doubt (with "~" when
-  roughly); otherwise, near the cube, it says *up or down? open your wings
-  once*.
-* **Cube here.** Within a few metres (more when your position is less
-  sure) the arrow can no longer point usefully, so it turns into a pulsing
-  green circle: *CUBE HERE*, and *look up* / *look down* / *look around you*.
-* **Beeps** (on by default, quiet): soft beeps from 30 m while you head for
-  the cube, a little faster as you get closer, and a short chime when you
-  arrive. They stop a few seconds after you stop going for it. Own volume
-  slider and a *Test beep* button.
+* **Up or down, 10 times a second.** The server sends each cube's exact
+  height, and yours with every event (wings, buffs, loading screens). In
+  between, your height comes from the ground around you: the server keeps
+  sending where monsters, NPCs, gathering spots and other players stand,
+  so the app fits the ground under you from them at every minimap reading,
+  and checks that fit against each of your own reported positions. When
+  the ground around you is unclear (cliffs, bridges, nothing nearby) or you
+  are flying, it falls back to the last reported height and is careful:
+  up or down is only said when it is clearly so ("~" when roughly), and
+  near a cube it otherwise says *up or down? open your wings once*.
+* **Beeps** (on, quiet): soft beeps from 30 m while you walk to the cube, a
+  little faster as you get closer, and a short chime when you arrive. They
+  stop a few seconds after you stop going for it. Own volume and *Test*.
 
 Why not a circle on the cube itself in the game picture? That would need
 the camera's tilt and zoom, which only exist in the game's memory, and this

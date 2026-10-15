@@ -1,8 +1,8 @@
 // The arrow around the character, drawn over the game: a ring on the ground
 // with an arrow towards the nearest live cube, turned with the camera (from
-// the minimap's view cone) so "ahead" is where you look. A label says how
-// far and whether it is up or down; on top of the cube the ring turns into a
-// green "cube here" circle.
+// the minimap's view cone) so "ahead" is where you look, and a label: how
+// far, and whether it is up or down. On top of the cube, where an arrow can
+// no longer point well, only the label stays: "right here" and where to look.
 
 import { backend } from "./lib/bridge";
 import {
@@ -24,7 +24,6 @@ const ctx = canvas.getContext("2d")!;
 
 /** The window is this many ring widths wide (GUIDE_AREA in src-tauri). */
 const AREA_W = 2.2;
-const HERE_COLOR = "#3ddc84";
 const UP_COLOR = "#5ad1ff";
 const DOWN_COLOR = "#ffa94d";
 const TEXT_COLOR = "#eef2f7";
@@ -34,8 +33,6 @@ let settings: RadarSettings = DEFAULT_SETTINGS;
 let frame: RadarFrame | null = null;
 let frameAt = 0;
 let camera: { deg: number; at: number } | null = null;
-/** The cube pointed at, and since when (a new one gets a pulse). */
-let target: { id: string; since: number } | null = null;
 
 function resize(): void {
   const dpr = window.devicePixelRatio || 1;
@@ -73,11 +70,9 @@ function render(): void {
   const fresh = frame !== null && player !== null && now - frameAt < 3000;
   const cube = fresh && frame ? nearestLive(frame.cubes) : null;
   if (!cube || cube.distance === null || cube.bearingDeg === null || !player) {
-    target = null;
     requestAnimationFrame(render);
     return;
   }
-  if (target?.id !== cube.id) target = { id: cube.id, since: now };
 
   const ring = w / AREA_W;
   const g: Geometry = { cx: w / 2, cy: h / 2, rx: ring * 0.3, ry: ring * 0.18, s: ring / 260, w, h };
@@ -86,11 +81,10 @@ function render(): void {
   // An old position: still shown, faded, and never as "here".
   ctx.globalAlpha = player.stale ? 0.45 : 1;
   if (!player.stale && isHere(cube.distance, player.accuracyM)) {
-    drawHere(g, cue, cube.distance, now);
+    drawLabel(g, hereLines(cue), g.cx, g.cy - g.ry - 12 * g.s, 0, -1);
   } else {
-    if (now - target.since < 1600) drawNewPulse(g, now - target.since);
     drawRing(g);
-    const lines = labelLines(cube.distance, cue, player.stale);
+    const lines = labelLines(cube.distance, cue);
     if (cam === null) {
       // No camera direction: no arrow, just the label above the ring.
       drawLabel(g, lines, g.cx, g.cy - g.ry - 12 * g.s, 0, -1);
@@ -114,12 +108,32 @@ interface Line {
   size: number;
 }
 
-function labelLines(distance: number, cue: HeightCue, stale: boolean): Line[] {
+function labelLines(distance: number, cue: HeightCue): Line[] {
   const lines: Line[] = [{ text: formatMetres(distance), color: settings.colors.cube, size: 22 }];
   const h = heightText(cue);
   if (h) lines.push({ text: h, color: cueColor(cue), size: 16 });
   else if (distance <= HEIGHT_HINT_M) lines.push(...WINGS_HINT);
-  if (stale) lines.push({ text: "your position is old", color: HINT_COLOR, size: 12 });
+  return lines;
+}
+
+/** On top of the cube: where to look. */
+function hereLines(cue: HeightCue): Line[] {
+  const lines: Line[] = [{ text: "right here", color: settings.colors.cube, size: 22 }];
+  const approx = cue.kind === "up" || cue.kind === "down" ? (cue.approx ? "~" : "") : "";
+  switch (cue.kind) {
+    case "up":
+      lines.push({ text: `▲ look up · ${approx}${cue.metres} m`, color: UP_COLOR, size: 16 });
+      break;
+    case "down":
+      lines.push({ text: `▼ look down · ${approx}${cue.metres} m`, color: DOWN_COLOR, size: 16 });
+      break;
+    case "level":
+      lines.push({ text: "look around you", color: TEXT_COLOR, size: 16 });
+      break;
+    case "unknown":
+      lines.push(...WINGS_HINT);
+      break;
+  }
   return lines;
 }
 
@@ -169,63 +183,6 @@ function drawArrow(g: Geometry, p: { x: number; y: number; angle: number }): voi
   ctx.strokeStyle = "rgba(0,0,0,0.9)";
   ctx.stroke();
   ctx.restore();
-}
-
-/** Rings spreading out from the character: a new cube to go for. */
-function drawNewPulse(g: Geometry, age: number): void {
-  for (const delay of [0, 400]) {
-    const t = (age - delay) / 1200;
-    if (t < 0 || t > 1) continue;
-    const k = 1 + 0.9 * t;
-    ctx.save();
-    ctx.beginPath();
-    ctx.ellipse(g.cx, g.cy, g.rx * k, g.ry * k, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = withAlpha(settings.colors.cube, 0.8 * (1 - t));
-    ctx.lineWidth = 4 * g.s;
-    ctx.stroke();
-    ctx.restore();
-  }
-}
-
-/** On top of the cube: a pulsing green circle and where to look. */
-function drawHere(g: Geometry, cue: HeightCue, distance: number, now: number): void {
-  const beat = (now % 900) / 900;
-  const k = 1 + 0.06 * Math.sin(beat * Math.PI * 2);
-  ctx.save();
-  // A ripple going out, then the circle itself.
-  const t = (now % 1300) / 1300;
-  ctx.beginPath();
-  ctx.ellipse(g.cx, g.cy, g.rx * (1 + 0.5 * t), g.ry * (1 + 0.5 * t), 0, 0, Math.PI * 2);
-  ctx.strokeStyle = withAlpha(HERE_COLOR, 0.7 * (1 - t));
-  ctx.lineWidth = 3 * g.s;
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.ellipse(g.cx, g.cy, g.rx * k, g.ry * k, 0, 0, Math.PI * 2);
-  ctx.fillStyle = withAlpha(HERE_COLOR, 0.14);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(0,0,0,0.5)";
-  ctx.lineWidth = 7 * g.s;
-  ctx.stroke();
-  ctx.strokeStyle = HERE_COLOR;
-  ctx.lineWidth = 4 * g.s;
-  ctx.stroke();
-  ctx.restore();
-  const lines: Line[] = [{ text: "CUBE HERE", color: HERE_COLOR, size: 24 }];
-  switch (cue.kind) {
-    case "up":
-      lines.push({ text: `▲ look up · ${cue.approx ? "~" : ""}${cue.metres} m`, color: UP_COLOR, size: 18 });
-      break;
-    case "down":
-      lines.push({ text: `▼ look down · ${cue.approx ? "~" : ""}${cue.metres} m`, color: DOWN_COLOR, size: 18 });
-      break;
-    case "level":
-      lines.push({ text: `look around you · ${formatMetres(distance)}`, color: TEXT_COLOR, size: 16 });
-      break;
-    case "unknown":
-      lines.push(...WINGS_HINT);
-      break;
-  }
-  drawLabel(g, lines, g.cx, g.cy - g.ry * 1.06 - 12 * g.s, 0, -1);
 }
 
 /**

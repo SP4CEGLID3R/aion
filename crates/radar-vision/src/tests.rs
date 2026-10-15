@@ -325,3 +325,43 @@ fn a_view_with_only_a_straight_road_is_flagged() {
     // Nearly every frame is either rejected or flagged as a ridge.
     assert!(ridged >= 35, "{ridged}");
 }
+
+#[test]
+fn picks_the_track_up_again_after_the_minimap_was_covered() {
+    let (w, h) = (311usize, 206usize);
+    let map = SynthMap::new(1600, 1300, 7);
+    // The big map or a dialog: a different picture altogether.
+    let other = SynthMap::new(700, 700, 99);
+    let at = |t: i64| (600.0 + 0.004 * t as f64, 500.0 + 0.002 * t as f64);
+    for black in [true, false] {
+        let mut tr = MinimapTracker::new(w, h, TrackerConfig::default());
+        let ov = Overlay::default();
+        let mut reference = None;
+        let mut worst: f64 = 0.0;
+        for i in 0..160i64 {
+            let t = i * 100;
+            // Covered for 4 s while walking on (18 px).
+            let covered = (80..120).contains(&i);
+            let px = match (covered, black) {
+                (true, true) => vec![0u8; w * h * 4],
+                (true, false) => frame(&other, 350.0, 350.0, w, h, &ov),
+                _ => {
+                    let (x, y) = at(t);
+                    frame(&map, x, y, w, h, &ov)
+                }
+            };
+            let s = tr.step(1_790_000_000_000 + t, &Bgra::packed(w, h, &px).unwrap());
+            if i == 79 {
+                reference = Some((s.seg, s.x, s.y, at(t)));
+            }
+            if i >= 122 {
+                let (seg, x0, y0, (tx0, ty0)) = reference.unwrap();
+                assert_eq!(s.seg, seg, "black={black} i={i}: not picked up again");
+                let (tx, ty) = at(t);
+                worst = worst.max(((s.x - x0) - (tx - tx0)).hypot((s.y - y0) - (ty - ty0)));
+            }
+        }
+        assert!(worst < 2.0, "black={black}: worst {worst:.2} px");
+        assert!(tr.stats().resumed >= 1);
+    }
+}

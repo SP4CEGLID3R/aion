@@ -8,7 +8,6 @@
 //  * Any other state is dropped, whatever the frame says.
 //  * Without a player position there is no centre, so nothing is placed.
 
-import { heightCue, heightShort } from "./guide";
 import { clampToRim, formatDistance, projectWorld, type View } from "./projection";
 import type { CubeView, RadarSettings, WorldPos } from "./types";
 
@@ -33,8 +32,6 @@ export function layoutMarkers(
   player: WorldPos | null,
   view: View,
   settings: Pick<RadarSettings, "showLabels" | "showDistances" | "showIndicators">,
-  /** How unsure the player's height is (null = measured), for "▲12 m". */
-  heightAccuracyM: number | null = null,
 ): MarkerLayout[] {
   if (!player) return [];
   const out: MarkerLayout[] = [];
@@ -44,13 +41,12 @@ export function layoutMarkers(
     const distance = Math.hypot(cube.pos.x - player.x, cube.pos.y - player.y);
     const stale = cube.state === "STALE";
     const inside = p.r <= view.radiusPx - INDICATOR_INSET / 2;
-    // Above or below, when clearly so (live cubes only).
-    const height = stale ? null : heightShort(heightCue(cube.height, heightAccuracyM));
 
     const parts: string[] = [];
     if (settings.showLabels) parts.push(cube.label ?? cube.id);
+    // Without names, an unconfirmed cube type still says so.
+    else if (cube.label?.includes("?")) parts.push("?");
     if (settings.showDistances) parts.push(formatDistance(distance));
-    if (settings.showDistances && height) parts.push(height);
     if (stale) parts.push("STALE");
     const text = parts.length ? parts.join(" · ") : null;
 
@@ -59,7 +55,7 @@ export function layoutMarkers(
     } else if (settings.showIndicators && !stale) {
       // Directional hints are for live cubes only.
       const rim = clampToRim(p, view, view.radiusPx - INDICATOR_INSET);
-      const hint = settings.showDistances ? [formatDistance(distance), height].filter(Boolean).join(" ") : null;
+      const hint = settings.showDistances ? formatDistance(distance) : null;
       out.push({ id: cube.id, kind: "indicator", x: rim.x, y: rim.y, angle: rim.angle, text: hint, distance });
     }
   }

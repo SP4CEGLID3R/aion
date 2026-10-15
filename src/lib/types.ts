@@ -25,7 +25,6 @@ export interface MinimapSettings {
 }
 
 export interface GuideSettings {
-  radarArrow: boolean;
   screenArrow: boolean;
   screenX: number;
   screenY: number;
@@ -235,6 +234,8 @@ export interface Aion2Status {
     checks: number;
     trusted: boolean;
   };
+  /** The ground height model behind the own height between fixes. */
+  ground: { samples: number; checks: number; missM: number | null; airborne: boolean };
   warnings: string[];
 }
 
@@ -300,6 +301,8 @@ export interface RadarSettings {
   alertSound: AlertSound;
   minimap: MinimapSettings;
   guide: GuideSettings;
+  /** The radar look the settings were saved with (older files get the clean look once). */
+  lookVersion: number;
 }
 
 export interface SettingsUpdate {
@@ -357,10 +360,10 @@ export const DEFAULT_SETTINGS: RadarSettings = {
     label: "#e8edf5",
     indicator: "#ffcc33",
   },
-  showLabels: true,
+  showLabels: false,
   showDistances: true,
   showIndicators: true,
-  showLegend: true,
+  showLegend: false,
   staleTimeoutSecs: 10,
   staleDisplay: "hide",
   staleRetainSecs: 30,
@@ -379,8 +382,9 @@ export const DEFAULT_SETTINGS: RadarSettings = {
   },
   style: "radar",
   mapGrid: true,
-  showTrail: true,
+  showTrail: false,
   alertSound: { enabled: true, volume: 0.8, file: null },
   minimap: { enabled: true, region: null, fps: 10, background: true },
-  guide: { radarArrow: true, screenArrow: true, screenX: 0.5, screenY: 0.62, screenSize: 260, beep: true, beepVolume: 0.25 },
+  guide: { screenArrow: true, screenX: 0.5, screenY: 0.62, screenSize: 260, beep: true, beepVolume: 0.25 },
+  lookVersion: 1,
 };

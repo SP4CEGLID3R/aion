@@ -1,9 +1,8 @@
 // Canvas drawing. Layout decisions live in layout.ts; this file only paints.
 
-import { formatMetres, heightCue, heightShort, nearestLive } from "./guide";
 import { layoutMarkers, type MarkerLayout } from "./layout";
 import { gridSegments, gridStep } from "./mapgrid";
-import { DEG, formatDistance, pointAt, projectWorld, screenAngle, type View } from "./projection";
+import { DEG, pointAt, projectWorld, screenAngle, type View } from "./projection";
 import type { CubeView, RadarSettings, WorldPos } from "./types";
 
 /** The live game minimap, drawn under the radar (north-up, player-centred). */
@@ -23,8 +22,6 @@ export interface Scene {
   view: View;
   /** 1-sigma uncertainty of an estimated position, metres. */
   accuracyM?: number | null;
-  /** 1-sigma uncertainty of the player's height, metres; null = measured. */
-  heightAccuracyM?: number | null;
   /** Recent own positions, oldest first. */
   trail?: readonly WorldPos[];
   background?: MinimapBackground | null;
@@ -42,51 +39,31 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
     return;
   }
 
-  // Disc.
+  // Like a minimap: the map (the game's own, when it is read, else a
+  // world-fixed grid), you in the middle, the cubes. Nothing else.
   ctx.beginPath();
   ctx.arc(view.cx, view.cy, view.radiusPx, 0, Math.PI * 2);
   ctx.fillStyle = withAlpha(c.background, 0.78);
   ctx.fill();
   if (scene.background && scene.player) drawBackground(ctx, scene, scene.background);
-
-  // Range rings with their distances.
-  ctx.font = FONT;
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  for (const f of [1 / 3, 2 / 3, 1]) {
-    ctx.beginPath();
-    ctx.arc(view.cx, view.cy, view.radiusPx * f, 0, Math.PI * 2);
-    ctx.strokeStyle = withAlpha(c.ring, f === 1 ? 0.9 : 0.45);
-    ctx.lineWidth = f === 1 ? 1.5 : 1;
-    ctx.stroke();
-    if (f < 1) {
-      ctx.fillStyle = withAlpha(c.ring, 0.9);
-      ctx.fillText(formatDistance(view.range * f), view.cx + 3, view.cy - view.radiusPx * f + 8);
-    }
-  }
-
-  if (settings.mapGrid && scene.player) drawGrid(ctx, scene);
+  else if (settings.mapGrid && scene.player) drawGrid(ctx, scene);
   if (settings.showTrail) drawTrail(ctx, scene);
 
-  // Cross-hair along the view axes.
+  // The rim.
   ctx.beginPath();
-  ctx.moveTo(view.cx - view.radiusPx, view.cy);
-  ctx.lineTo(view.cx + view.radiusPx, view.cy);
-  ctx.moveTo(view.cx, view.cy - view.radiusPx);
-  ctx.lineTo(view.cx, view.cy + view.radiusPx);
-  ctx.strokeStyle = withAlpha(c.ring, 0.25);
-  ctx.lineWidth = 1;
+  ctx.arc(view.cx, view.cy, view.radiusPx, 0, Math.PI * 2);
+  ctx.strokeStyle = withAlpha(c.ring, 0.9);
+  ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  drawCompass(ctx, scene);
+  drawNorth(ctx, scene);
 
-  const markers = layoutMarkers(scene.cubes, scene.player, view, settings, scene.heightAccuracyM ?? null);
+  const markers = layoutMarkers(scene.cubes, scene.player, view, settings);
   for (const m of markers) drawMarker(ctx, m, settings, width);
 
   if (scene.player) {
     drawAccuracy(ctx, scene);
     drawPlayer(ctx, scene);
-    if (settings.guide.radarArrow) drawGuide(ctx, scene);
   }
 }
 
@@ -110,44 +87,6 @@ function drawBackground(ctx: CanvasRenderingContext2D, scene: Scene, bg: Minimap
   ctx.restore();
 }
 
-/** An arrow on a ring around the player marker, towards the nearest cube. */
-function drawGuide(ctx: CanvasRenderingContext2D, scene: Scene): void {
-  const { view, settings } = scene;
-  const target = nearestLive(scene.cubes);
-  if (!target || target.bearingDeg === null || target.distance === null) return;
-  const ring = 22;
-  const angle = screenAngle(target.bearingDeg, view);
-  const p = pointAt(angle, ring, view);
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(view.cx, view.cy, ring, 0, Math.PI * 2);
-  ctx.setLineDash([3, 4]);
-  ctx.strokeStyle = withAlpha(settings.colors.cube, 0.45);
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.translate(p.x, p.y);
-  ctx.rotate(angle);
-  ctx.beginPath();
-  ctx.moveTo(0, -9);
-  ctx.lineTo(7, 4);
-  ctx.lineTo(0, 1);
-  ctx.lineTo(-7, 4);
-  ctx.closePath();
-  ctx.fillStyle = settings.colors.cube;
-  ctx.strokeStyle = "rgba(0,0,0,0.75)";
-  ctx.lineWidth = 1.5;
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
-  // Within range the cube's own label already says how far and how high.
-  if (settings.showDistances && target.distance <= view.range) return;
-  const tp = pointAt(angle, ring + 18, view);
-  const height = heightShort(heightCue(target.height, scene.heightAccuracyM ?? null));
-  const text = height ? `${formatMetres(target.distance)} ${height}` : formatMetres(target.distance);
-  label(ctx, text, tp.x, tp.y, settings.colors.cube, "center");
-}
-
 /** Markers only, on a clear background, for laying over the game's minimap. */
 function drawMinimapScene(ctx: CanvasRenderingContext2D, scene: Scene, width: number): void {
   const { settings, view } = scene;
@@ -157,12 +96,9 @@ function drawMinimapScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
   ctx.strokeStyle = withAlpha(settings.colors.ring, 0.35);
   ctx.lineWidth = 1;
   ctx.stroke();
-  const markers = layoutMarkers(scene.cubes, scene.player, view, settings, scene.heightAccuracyM ?? null);
+  const markers = layoutMarkers(scene.cubes, scene.player, view, settings);
   for (const m of markers) drawMarker(ctx, m, settings, width);
-  if (scene.player) {
-    drawAccuracy(ctx, scene);
-    if (settings.guide.radarArrow) drawGuide(ctx, scene);
-  }
+  if (scene.player) drawAccuracy(ctx, scene);
 }
 
 /** World-fixed grid lines, clipped to the disc: they slide as you move. */
@@ -228,16 +164,21 @@ function drawAccuracy(ctx: CanvasRenderingContext2D, scene: Scene): void {
   ctx.restore();
 }
 
-function drawCompass(ctx: CanvasRenderingContext2D, scene: Scene): void {
-  const { view, settings } = scene;
-  ctx.font = "700 12px system-ui, 'Segoe UI', sans-serif";
+/** "N" on the rim, where north is (it moves in heading-up mode). */
+function drawNorth(ctx: CanvasRenderingContext2D, scene: Scene): void {
+  const { view } = scene;
+  const p = pointAt(screenAngle(0, view), view.radiusPx - 12, view);
+  ctx.save();
+  ctx.font = "800 13px system-ui, 'Segoe UI', sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  for (const [label, deg] of [["N", 0], ["E", 90], ["S", 180], ["W", 270]] as const) {
-    const p = pointAt(screenAngle(deg, view), view.radiusPx - 12, view);
-    ctx.fillStyle = label === "N" ? "#ff6b6b" : withAlpha(settings.colors.label, 0.7);
-    ctx.fillText(label, p.x, p.y);
-  }
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(0,0,0,0.7)";
+  ctx.strokeText("N", p.x, p.y);
+  ctx.fillStyle = "#ff6b6b";
+  ctx.fillText("N", p.x, p.y);
+  ctx.restore();
 }
 
 function drawPlayer(ctx: CanvasRenderingContext2D, scene: Scene): void {

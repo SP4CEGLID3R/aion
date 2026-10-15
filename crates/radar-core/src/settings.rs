@@ -83,8 +83,6 @@ pub const MINIMAP_FPS_LIMITS: (u32, u32) = (4, 20);
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GuideSettings {
-    /// On the radar, on a ring around your marker.
-    pub radar_arrow: bool,
     /// Over the game, around your character (needs the camera direction
     /// from minimap tracking).
     pub screen_arrow: bool,
@@ -102,7 +100,6 @@ pub struct GuideSettings {
 impl Default for GuideSettings {
     fn default() -> Self {
         Self {
-            radar_arrow: true,
             screen_arrow: true,
             screen_x: 0.5,
             screen_y: 0.62,
@@ -297,7 +294,15 @@ pub struct RadarSettings {
     pub alert_sound: AlertSound,
     pub minimap: MinimapSettings,
     pub guide: GuideSettings,
+    /// Which version of the radar's look these settings were saved with;
+    /// older files get the current clean look once (see `sanitized`).
+    #[serde(default)]
+    pub look_version: u32,
 }
+
+/// The radar's look: 1 = like a minimap with cubes (distances only, no
+/// names, trail or legend unless asked for).
+pub const LOOK_VERSION: u32 = 1;
 
 impl Default for RadarSettings {
     fn default() -> Self {
@@ -307,10 +312,10 @@ impl Default for RadarSettings {
             rotation_offset_deg: 0.0,
             opacity: 0.85,
             colors: RadarColors::default(),
-            show_labels: true,
+            show_labels: false,
             show_distances: true,
             show_indicators: true,
-            show_legend: true,
+            show_legend: false,
             stale_timeout_secs: 10.0,
             stale_display: StaleDisplay::Hide,
             stale_retain_secs: 30.0,
@@ -321,10 +326,11 @@ impl Default for RadarSettings {
             coordinate_transform: CoordinateTransform::default(),
             style: RadarStyle::Radar,
             map_grid: true,
-            show_trail: true,
+            show_trail: false,
             alert_sound: AlertSound::default(),
             minimap: MinimapSettings::default(),
             guide: GuideSettings::default(),
+            look_version: LOOK_VERSION,
         }
     }
 }
@@ -368,6 +374,14 @@ impl RadarSettings {
         let d = RadarSettings::default();
         let mut w = Vec::new();
         let mut s = self.clone();
+
+        // Saved before the clean look: switch to it once; later choices stay.
+        if s.look_version < LOOK_VERSION {
+            s.show_labels = d.show_labels;
+            s.show_legend = d.show_legend;
+            s.show_trail = d.show_trail;
+            s.look_version = LOOK_VERSION;
+        }
 
         s.range = clamp_f("range", s.range, RANGE_LIMITS, d.range, &mut w);
         s.opacity = clamp_f("opacity", s.opacity, OPACITY_LIMITS, d.opacity, &mut w);
@@ -560,6 +574,26 @@ mod tests {
         assert_eq!(s.rotation_offset_deg, 270.0);
         assert_eq!(s.update_hz, 60);
         assert_eq!(w.len(), 4, "{w:?}"); // rotation is normalised silently
+    }
+
+    #[test]
+    fn older_settings_get_the_clean_look_once() {
+        let old: RadarSettings = serde_json::from_str(
+            r#"{"showLabels":true,"showLegend":true,"showTrail":true,"range":80}"#,
+        )
+        .unwrap();
+        assert_eq!(old.look_version, 0);
+        let (s, w) = old.sanitized();
+        assert!(w.is_empty(), "{w:?}");
+        assert!(!s.show_labels && !s.show_legend && !s.show_trail);
+        assert_eq!(s.range, 80.0);
+        assert_eq!(s.look_version, LOOK_VERSION);
+        // Turned back on afterwards: kept.
+        let again = RadarSettings {
+            show_labels: true,
+            ..s
+        };
+        assert!(again.sanitized().0.show_labels);
     }
 
     #[test]

@@ -241,6 +241,13 @@ pub mod aion2_layout {
         encode_frame([0x35, 0x36], &b)
     }
 
+    /// Who we are (sent once at login).
+    pub fn self_info() -> Vec<u8> {
+        let mut b = varint(SELF_ID);
+        b.extend([0u8; 8]);
+        encode_frame([0x33, 0x36], &b)
+    }
+
     pub fn self_buff(p: [f32; 3]) -> Vec<u8> {
         let mut b = varint(SELF_ID);
         b.extend([0x01, 0x11, 0x90, 0x03, 0xe8, 0x03, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -261,12 +268,26 @@ pub mod aion2_layout {
         ]
     }
 
+    /// How often the synthetic session reports our own position.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Fixes {
+        /// A self-buff every 3 s.
+        Every3s,
+        /// Who we are, then one self-buff after 1 s and never again (like
+        /// opening the wings once after logging in).
+        Once,
+    }
+
     /// `seconds` of a server→client game stream starting at `t0` (ms): a
     /// heartbeat every 50 ms, a self-buff every 3 s, a cube appearing about
     /// 60 m away (12 m up, 5 m down or level) every 20 s; each is opened
     /// after 12 s (or, every third one, leaves the send range), plus objects
-    /// that are not cubes.
+    /// that are not cubes, some standing around on flat ground.
     pub fn session(t0: f64, seconds: u32) -> Vec<Record> {
+        session_with(t0, seconds, Fixes::Every3s)
+    }
+
+    pub fn session_with(t0: f64, seconds: u32, fixes: Fixes) -> Vec<Record> {
         let server: SocketAddr = "198.51.100.30:13328".parse().unwrap();
         let client: SocketAddr = "192.168.0.10:50123".parse().unwrap();
         let mut seq: u32 = 1_000;
@@ -282,7 +303,28 @@ pub mod aion2_layout {
             let rel = tick as f64 * 50.0;
             let t = t0 + rel;
             let mut batch = heartbeat(t);
-            if tick.is_multiple_of(60) {
+            if tick == 0 {
+                if fixes == Fixes::Once {
+                    batch.extend(self_info());
+                }
+                // Things standing around on the (flat) ground near the walk.
+                for k in 0..36u64 {
+                    let a = k as f32 * 0.7;
+                    let r = 1_000.0 + (k % 6) as f32 * 700.0;
+                    let c = player(0.0);
+                    let wobble = (k % 5) as f32 * 10.0 - 20.0;
+                    batch.extend(spawn(
+                        80_000 + k,
+                        1_500_050,
+                        [c[0] + r * a.cos(), c[1] + r * a.sin(), c[2] + wobble],
+                    ));
+                }
+            }
+            let fix_due = match fixes {
+                Fixes::Every3s => tick.is_multiple_of(60),
+                Fixes::Once => tick == 20,
+            };
+            if fix_due {
                 batch.extend(self_buff(player(rel)));
             }
             if tick % 400 == 40 {

@@ -87,18 +87,12 @@ export function heightText(cue: HeightCue): string | null {
   }
 }
 
-/** Short form for the radar's labels: "▲12", "▼~5"; null otherwise. */
-export function heightShort(cue: HeightCue): string | null {
-  if (cue.kind !== "up" && cue.kind !== "down") return null;
-  return `${cue.kind === "up" ? "▲" : "▼"}${cue.approx ? "~" : ""}${cue.metres}`;
-}
-
 // ---------------------------------------------------------------------------
 // On top of it
 // ---------------------------------------------------------------------------
 
 /** Within this distance the cube is "here": look around rather than follow the arrow. */
-export const HERE_M = 6;
+export const HERE_M = 4;
 
 /**
  * You are on top of the cube: closer than the arrow can usefully point
@@ -106,7 +100,7 @@ export const HERE_M = 6;
  */
 export function isHere(distance: number, accuracyM: number | null): boolean {
   const doubt = accuracyM !== null && Number.isFinite(accuracyM) ? accuracyM : 0;
-  return distance <= Math.min(15, Math.max(HERE_M, 2 * doubt));
+  return distance <= Math.min(8, Math.max(HERE_M, 2 * doubt));
 }
 
 /** Within this distance an unknown height is worth a hint to measure it. */

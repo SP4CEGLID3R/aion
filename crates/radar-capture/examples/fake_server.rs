@@ -3,6 +3,7 @@
 //!
 //!     cargo run -p radar-capture --example fake_server -- 7777 30          # invented opcodes
 //!     cargo run -p radar-capture --example fake_server -- 7777 30 aion2    # documented AION 2 layouts
+//!     cargo run -p radar-capture --example fake_server -- 7777 30 aion2-once   # …own position reported once
 //!     nc 127.0.0.1 7777 > /dev/null      # any client
 //!
 //! Either way the data is made up.
@@ -18,11 +19,11 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let port: u16 = args.next().and_then(|a| a.parse().ok()).unwrap_or(7777);
     let seconds: u32 = args.next().and_then(|a| a.parse().ok()).unwrap_or(30);
-    let aion2 = args.next().as_deref() == Some("aion2");
-    let records = if aion2 {
-        synthetic::aion2_layout::session(0.0, seconds)
-    } else {
-        synthetic::session(0.0, seconds).records
+    use synthetic::aion2_layout::{session_with, Fixes};
+    let records = match args.next().as_deref() {
+        Some("aion2") => session_with(0.0, seconds, Fixes::Every3s),
+        Some("aion2-once") => session_with(0.0, seconds, Fixes::Once),
+        _ => synthetic::session(0.0, seconds).records,
     };
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind");
     eprintln!("synthetic server on 127.0.0.1:{port}, waiting for a client");

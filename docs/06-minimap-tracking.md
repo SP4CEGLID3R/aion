@@ -52,6 +52,14 @@ NewAge-BD/Soulcrest; checked on their screenshots.
   apart, found in the angular brightness profile around the arrow.
 * **Black or frozen capture** and **track breaks** are reported, never
   hidden.
+* **Picking up again**: the last good view of each recent segment is kept
+  (3 segments, 2 minutes). When the track breaks or the minimap comes back
+  after being covered (the big map, a dialog, a black frame), the new view
+  is matched against them (stricter: peak ≥ 0.6, margin ≥ 0.08); if it is
+  the same place, the old segment continues with its own coordinates, and
+  the fusion returns to that segment's position chain. So closing the big
+  map does not need the wings again, as long as you did not travel further
+  than about a third of the minimap meanwhile.
 
 Measured on synthetic minimaps (procedural maps with cone, ring, icons and
 moving dots; 60 s walks with turns, stops and gliding): within about 2 px
@@ -75,15 +83,23 @@ Not yet measured in the live game.
 * **Axes**: seeded "right = +X, down = +Y" (north = −Y), re-fitted from leg
   directions among the 8 possible mappings once 4 legs agree.
 * **Uncertainty** (the dashed circle): fix error, 3 % of the distance moved
-  (12 % before the scale is confirmed), extra for bridged breaks and plain
-  stretches. When unsure (minimap hidden, track broken, map not moving with
+  (12 % before the scale is confirmed), extra for bridged breaks and for
+  plain stretches (a road or coast filling the view: up to running speed
+  for a flat match peak, in proportion for an elongated one). When unsure (minimap hidden, track broken, map not moving with
   you), the radar shows the last fix rather than a guess.
 * The calibration is saved in `aion2-learned.json` and reused.
-* **Height**: the minimap is flat, so positions between fixes keep the last
-  fix's height. Its uncertainty is sent along with each position (0.5 m
-  plus 1 m per 5 m moved from the fix, i.e. ground rising or falling by up
-  to about 11°); the guide only says a cube is up or down when the
-  difference is at least twice that (`src/lib/guide.ts`, `heightCue`).
+* **Height**: the minimap is flat, so it says nothing about height. Each
+  position between fixes gets the better of two height estimates, with its
+  uncertainty: the last fix's height (0.5 m, plus 1 m per 5 m moved from
+  the fix: ground rising or falling by up to ~11°), or the ground model
+  (`aion2/ground.rs`): a robust, distance-weighted plane through the
+  positions the server sends for everything within 25–40 m (objects,
+  monsters, NPCs, other players), checked against every own fix (its
+  typical miss adds to the uncertainty; before two checks, 3 m is
+  assumed). A fix more than 3 m above the modelled ground means flying or
+  gliding: the ground model is then not used until the next fix. The guide
+  only says a cube is up or down when the difference is at least twice the
+  uncertainty (`src/lib/guide.ts`, `heightCue`).
 
 Order of sources: a fresh server fix, then the minimap, then the
 object-range estimate.
@@ -91,7 +107,7 @@ object-range estimate.
 ## Setting it up
 
 Usually nothing: the minimap's default spot on the primary monitor is used.
-If the HUD was edited, Settings → *Minimap tracking* → *Pick the minimap on
+If the HUD was edited, Settings → *Your position* → *Pick the minimap on
 screen…* takes a screenshot (the settings window steps aside) and lets you
 drag a box over the map area. The preview shows exactly what is read, with
 a cross on the pivot.

@@ -122,6 +122,17 @@ struct TrackPt {
     x: f64,
     y: f64,
     chain: u64,
+    seg: i64,
+}
+
+/// A point on the minimap track: comparable with others of the same chain.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TrackRef {
+    x: f64,
+    y: f64,
+    chain: u64,
+    /// The tracker segment it was measured in.
+    seg: i64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -129,8 +140,8 @@ struct Anchor {
     t: Millis,
     pos: [f32; 3],
     zone: bool,
-    /// Track position at the fix (x, y, chain), if the track covered it.
-    p: Option<(f64, f64, u64)>,
+    /// Track position at the fix, if the track covered it.
+    p: Option<TrackRef>,
     /// Track breaks before this fix (for uncertainty).
     breaks: u64,
     /// Plain-view time before this fix (for uncertainty).
@@ -167,6 +178,10 @@ pub struct MinimapFusion {
     ring_odd: u32,
     track: VecDeque<TrackPt>,
     chain: u64,
+    next_chain: u64,
+    /// The chain each recent tracker segment belongs to: a segment the
+    /// tracker picks up again (after the minimap was covered) returns to it.
+    seg_chain: VecDeque<(i64, u64)>,
     last_seg: Option<i64>,
     last_good_t: Option<Millis>,
     breaks: u64,
@@ -181,7 +196,8 @@ pub struct MinimapFusion {
     frames: u64,
     dirty: bool,
     units_per_m: f64,
-    /// Total time the view was a plain ridge, and the current run of it.
+    /// Time the view was a plain ridge (elongated peaks count in part:
+    /// see `on_frame`), in total and in the current run.
     ridge_ms: Millis,
     ridge_run: Millis,
     last_frame_dt: Millis,
@@ -226,6 +242,8 @@ impl MinimapFusion {
             ring_odd: 0,
             track: VecDeque::new(),
             chain: 0,
+            next_chain: 1,
+            seg_chain: VecDeque::new(),
             last_seg: None,
             last_good_t: None,
             breaks: 0,
@@ -310,8 +328,9 @@ impl MinimapFusion {
             self.on_ring(r);
         }
         if s.black {
-            // The minimap is gone (loading screen, big map): the chain ends.
-            self.chain += 1;
+            // The minimap is gone (loading screen, big map): the chain ends,
+            // unless the tracker later picks the same segment up again.
+            self.new_chain();
             self.last_seg = None;
             for mut a in std::mem::take(&mut self.pending) {
                 a.p = None;
@@ -322,24 +341,55 @@ impl MinimapFusion {
         if s.x.is_nan() {
             return;
         }
-        // A new tracker segment continues the chain if the break was short.
-        if let Some(seg) = self.last_seg {
-            if seg != s.seg {
+        if self.last_seg != Some(s.seg) {
+            let known = self
+                .seg_chain
+                .iter()
+                .find(|(seg, _)| *seg == s.seg)
+                .map(|(_, c)| *c);
+            if self.last_seg.is_some() {
                 self.breaks += 1;
-                if self.last_good_t.is_none_or(|g| s.t - g > BRIDGE_MS) {
-                    self.chain += 1;
+            }
+            match known {
+                // Picked up again: back to that segment's chain.
+                Some(c) => self.resume_segment(c, s),
+                // A new segment continues the chain if the break was short.
+                None => {
+                    if self.last_seg.is_some()
+                        && self.last_good_t.is_none_or(|g| s.t - g > BRIDGE_MS)
+                    {
+                        self.new_chain();
+                    }
                 }
+            }
+            self.seg_chain.retain(|(seg, _)| *seg != s.seg);
+            self.seg_chain.push_back((s.seg, self.chain));
+            while self.seg_chain.len() > 32 {
+                self.seg_chain.pop_front();
             }
         }
         self.last_seg = Some(s.seg);
         if s.good || !s.brk {
             self.last_good_t = Some(s.t);
         }
-        if s.good && s.roundness < s.ridge {
-            self.ridge_ms += self.last_frame_dt;
-            self.ridge_run += self.last_frame_dt;
-        } else if s.good {
-            self.ridge_run = 0;
+        // How much of this frame's movement may have gone unseen along a
+        // road or coast: none for a round match peak, all of it for a flat
+        // one, in between for an elongated one. (A cliff edge at the
+        // threshold made a view just under it cost as much as a featureless
+        // road, so ordinary scenes looked unsure within seconds.)
+        if s.good {
+            let severity = if s.ridge > 0.0 {
+                ((s.ridge - s.roundness) / s.ridge).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            if severity > 0.0 {
+                let dt = (self.last_frame_dt as f64 * severity).round() as Millis;
+                self.ridge_ms += dt;
+                self.ridge_run += dt;
+            } else {
+                self.ridge_run = 0;
+            }
         }
         let prev = self.track.back().copied();
         let pt = TrackPt {
@@ -347,6 +397,7 @@ impl MinimapFusion {
             x: s.x,
             y: s.y,
             chain: self.chain,
+            seg: s.seg,
         };
         self.track.push_back(pt);
         while self.track.len() > TRACK_KEEP {
@@ -362,6 +413,41 @@ impl MinimapFusion {
             }
         }
         self.pending = keep;
+    }
+
+    fn new_chain(&mut self) {
+        self.chain = self.next_chain;
+        self.next_chain += 1;
+    }
+
+    /// The tracker picked an earlier segment up again, so positions are that
+    /// segment's (in its chain `c`) from here on. A fix taken during the
+    /// segment being left comes along: the offset between the two is what
+    /// the last frame of one and this frame of the other show (0.1 s apart).
+    fn resume_segment(&mut self, c: u64, s: &MinimapSample) {
+        let from = self.last_seg;
+        if let Some(last) = self
+            .track
+            .back()
+            .copied()
+            .filter(|l| Some(l.seg) == from && s.t - l.t <= 300)
+        {
+            let (ox, oy) = (s.x - last.x, s.y - last.y);
+            for a in [self.anchor.as_mut(), self.leg_start.as_mut()]
+                .into_iter()
+                .flatten()
+            {
+                if let Some(p) = a.p.filter(|p| p.seg == last.seg) {
+                    a.p = Some(TrackRef {
+                        x: p.x + ox,
+                        y: p.y + oy,
+                        chain: c,
+                        seg: s.seg,
+                    });
+                }
+            }
+        }
+        self.chain = c;
     }
 
     /// A server fix of the own position (`zone`: map load / teleport, no leg
@@ -385,10 +471,10 @@ impl MinimapFusion {
         }
     }
 
-    fn track_at(&self, t: Millis) -> Option<(f64, f64, u64)> {
+    fn track_at(&self, t: Millis) -> Option<TrackRef> {
         let last = *self.track.back()?;
         if t >= last.t {
-            return (t - last.t <= STALE_FRAME_MS).then_some((last.x, last.y, last.chain));
+            return (t - last.t <= STALE_FRAME_MS).then_some(last.at());
         }
         for i in (1..self.track.len()).rev() {
             if self.track[i - 1].t <= t {
@@ -402,14 +488,16 @@ impl MinimapFusion {
         let ls = if a.zone { None } else { self.leg_start };
         match (ls, a.p) {
             (Some(ls), Some(p))
-                if ls.p.is_some_and(|q| q.2 == p.2) && a.t > ls.t && a.t - ls.t <= LEG_MAX_MS =>
+                if ls.p.is_some_and(|q| q.chain == p.chain)
+                    && a.t > ls.t
+                    && a.t - ls.t <= LEG_MAX_MS =>
             {
                 let q = ls.p.expect("checked");
                 let w = ((a.pos[0] - ls.pos[0]) as f64, (a.pos[1] - ls.pos[1]) as f64);
                 let wm = w.0.hypot(w.1) / self.units_per_m;
                 if wm >= LEG_MIN_M {
                     if wm <= LEG_MAX_M {
-                        let d = (p.0 - q.0, p.1 - q.1);
+                        let d = (p.x - q.x, p.y - q.y);
                         let k = d.0.hypot(d.1) / w.0.hypot(w.1).max(1e-9);
                         self.leg(Leg { w, d, k });
                     }
@@ -607,10 +695,10 @@ impl MinimapFusion {
         let Some(cur) = self.track_at(t) else {
             return none(LocKind::Uncertain, "minimap track broken");
         };
-        if cur.2 != p.2 {
+        if cur.chain != p.chain {
             return none(LocKind::Uncertain, "minimap track broken");
         }
-        let (wx, wy) = self.to_world(cur.0 - p.0, cur.1 - p.1);
+        let (wx, wy) = self.to_world(cur.x - p.x, cur.y - p.y);
         // Uncertainty: fix error, scale error over the distance moved, and a
         // little per track break bridged.
         let dist = wx.hypot(wy);
@@ -691,13 +779,29 @@ impl MinimapFusion {
 
 /// Track position at `t` between two samples of one chain, or the newer
 /// sample when `t` is within 150 ms of it.
-fn interp(a: Option<TrackPt>, b: TrackPt, t: Millis) -> Option<(f64, f64, u64)> {
-    match a {
-        Some(a) if a.chain == b.chain && b.t - a.t <= 1_000 && t >= a.t => {
-            let f = (t - a.t) as f64 / (b.t - a.t).max(1) as f64;
-            Some((a.x + f * (b.x - a.x), a.y + f * (b.y - a.y), b.chain))
+impl TrackPt {
+    fn at(&self) -> TrackRef {
+        TrackRef {
+            x: self.x,
+            y: self.y,
+            chain: self.chain,
+            seg: self.seg,
         }
-        _ => ((b.t - t).abs() <= 150).then_some((b.x, b.y, b.chain)),
+    }
+}
+
+fn interp(a: Option<TrackPt>, b: TrackPt, t: Millis) -> Option<TrackRef> {
+    match a {
+        // Only within one segment: across a switch the coordinates jump.
+        Some(a) if a.chain == b.chain && a.seg == b.seg && b.t - a.t <= 1_000 && t >= a.t => {
+            let f = (t - a.t) as f64 / (b.t - a.t).max(1) as f64;
+            Some(TrackRef {
+                x: a.x + f * (b.x - a.x),
+                y: a.y + f * (b.y - a.y),
+                ..b.at()
+            })
+        }
+        _ => ((b.t - t).abs() <= 150).then_some(b.at()),
     }
 }
 
@@ -804,6 +908,40 @@ mod tests {
     }
 
     #[test]
+    fn elongated_views_cost_in_proportion_and_only_flat_ones_make_it_unsure() {
+        let w = World {
+            k: SEED_K,
+            m: AXIS_MAPS[0].1,
+            origin: (0.0, 50_000.0),
+        };
+        let sigma_after = |roundness: f64, secs: i64| {
+            let mut f = MinimapFusion::new(UPM, None);
+            f.on_frame(&w.sample(0));
+            f.on_fix(50, w.pos(50), false);
+            for i in 1..=secs * 10 {
+                let mut s = w.sample(i * 100);
+                s.roundness = roundness;
+                f.on_frame(&s);
+            }
+            let loc = f.locate(secs * 1000);
+            (loc.kind, loc.sigma / UPM)
+        };
+        // A round peak: fix error plus 12 % (unconfirmed scale) of the
+        // ~100 m from the fix.
+        let (kind, round) = sigma_after(0.5, 20);
+        assert_eq!(kind, LocKind::Live);
+        assert!(round < 16.0, "{round}");
+        // Just under the ridge threshold (common in ordinary scenes): about
+        // the same, not +7 m every second.
+        let (kind, near) = sigma_after(0.06, 20);
+        assert_eq!(kind, LocKind::Live);
+        assert!(near - round < 12.0, "{near} vs {round}");
+        // A flat peak (a featureless road): unsure after 3 s.
+        let (kind, _) = sigma_after(0.0, 4);
+        assert_eq!(kind, LocKind::Uncertain);
+    }
+
+    #[test]
     fn a_fix_waits_for_the_next_frame_and_breaks_are_bridged() {
         let w = World {
             k: SEED_K,
@@ -830,6 +968,84 @@ mod tests {
         b.x = f64::NAN;
         f.on_frame(&b);
         assert_eq!(f.locate(300).kind, LocKind::Uncertain);
+    }
+
+    #[test]
+    fn a_segment_picked_up_again_carries_on_without_a_new_fix() {
+        let w = World {
+            k: SEED_K,
+            m: AXIS_MAPS[0].1,
+            origin: (0.0, 50_000.0),
+        };
+        for covered_by_black in [true, false] {
+            let mut f = MinimapFusion::new(UPM, None);
+            f.on_frame(&w.sample(0));
+            f.on_fix(50, w.pos(50), false);
+            for i in 1..50 {
+                f.on_frame(&w.sample(i * 100));
+            }
+            assert_eq!(f.locate(4_900).kind, LocKind::Live);
+            // 3 s covered: black frames, or the big map tracked as a
+            // segment of its own (a still picture: the position stops where
+            // it was, while we walk on).
+            let held = w.sample(4_900);
+            for i in 50..80 {
+                let mut s = w.sample(i * 100);
+                if covered_by_black {
+                    s.black = true;
+                    s.x = f64::NAN;
+                } else {
+                    s.seg = 7;
+                    (s.x, s.y) = (held.x, held.y);
+                }
+                f.on_frame(&s);
+            }
+            if covered_by_black {
+                assert_eq!(f.locate(7_900).kind, LocKind::Uncertain);
+            }
+            // The tracker picks segment 0 up again: positions are right
+            // again without opening the wings.
+            for i in 80..100 {
+                f.on_frame(&w.sample(i * 100));
+            }
+            let loc = f.locate(9_900);
+            assert_eq!(loc.kind, LocKind::Live, "black={covered_by_black}");
+            let (p, q) = (loc.pos.unwrap(), w.pos(9_900));
+            let err = ((p[0] - q[0]) as f64).hypot((p[1] - q[1]) as f64) / UPM;
+            assert!(err < 0.5, "black={covered_by_black}: {err} m");
+        }
+    }
+
+    #[test]
+    fn a_fix_during_the_cover_moves_with_the_resumed_segment() {
+        let w = World {
+            k: SEED_K,
+            m: AXIS_MAPS[0].1,
+            origin: (0.0, 50_000.0),
+        };
+        let mut f = MinimapFusion::new(UPM, None);
+        for i in 0..30 {
+            f.on_frame(&w.sample(i * 100));
+        }
+        // A new segment (seg 3) tracks properly for 2 s, offset by 40 px…
+        for i in 30..50 {
+            let mut s = w.sample(i * 100);
+            s.seg = 3;
+            s.x += 40.0;
+            f.on_frame(&s);
+            if i == 40 {
+                f.on_fix(i * 100 + 50, w.pos(i * 100 + 50), false); // …and anchors
+            }
+        }
+        // …then the tracker realises it is segment 0's place after all.
+        for i in 50..70 {
+            f.on_frame(&w.sample(i * 100));
+        }
+        let loc = f.locate(6_900);
+        assert_eq!(loc.kind, LocKind::Live);
+        let (p, q) = (loc.pos.unwrap(), w.pos(6_900));
+        let err = ((p[0] - q[0]) as f64).hypot((p[1] - q[1]) as f64) / UPM;
+        assert!(err < 1.0, "{err} m");
     }
 
     #[test]

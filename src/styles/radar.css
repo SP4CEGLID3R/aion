@@ -196,3 +196,8 @@ body.separate #resize-grip {
   font-weight: 700;
   pointer-events: none;
 }
+
+/* Hidden means hidden, whatever display a rule above gives the element. */
+[hidden] {
+  display: none !important;
+}

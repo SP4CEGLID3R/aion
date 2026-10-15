@@ -282,3 +282,61 @@ button.secondary {
     flex-direction: column;
   }
 }
+
+/* Clean layout: the essentials, then "More settings" folded away. */
+.top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.saved {
+  color: #7ee2a8;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.saved.show {
+  opacity: 1;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 24px;
+}
+
+.row label {
+  flex: 1;
+  margin: 2px 0;
+}
+
+.row input[type="range"] {
+  flex: 1;
+  max-width: 220px;
+}
+
+details.more {
+  margin: 4px 0 12px;
+}
+
+details.more > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 700;
+  padding: 6px 2px;
+  user-select: none;
+}
+
+details.more[open] > summary {
+  margin-bottom: 8px;
+}
+
+/* Hidden means hidden, whatever display a rule above gives the element. */
+[hidden] {
+  display: none !important;
+}

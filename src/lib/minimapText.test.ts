@@ -42,15 +42,15 @@ function withMinimap(state: string, legs = 0, reason = ""): CaptureStatus {
 describe("minimap status text", () => {
   it("explains what is missing", () => {
     expect(minimapStatusText({ ...capture, minimap: { ...capture.minimap, enabled: false } }, vision, null)).toBe("Off.");
-    expect(minimapStatusText(DEFAULT_SETTINGS, vision, null)).toMatch(/Packet capture/);
+    expect(minimapStatusText(DEFAULT_SETTINGS, vision, null)).toMatch(/network traffic/);
     expect(minimapStatusText(capture, { ...vision, black: true }, null)).toMatch(/borderless/);
     expect(minimapStatusText(capture, { ...vision, error: "denied" }, null)).toMatch(/denied/);
     expect(minimapStatusText(capture, vision, withMinimap("no fix"))).toMatch(/open your wings once/i);
   });
 
   it("says whether the scale is confirmed", () => {
-    expect(minimapStatusText(capture, vision, withMinimap("tracking", 0))).toMatch(/default scale/);
-    expect(minimapStatusText(capture, vision, withMinimap("tracking", 4))).toMatch(/confirmed/);
+    expect(minimapStatusText(capture, vision, withMinimap("tracking", 0))).toMatch(/fine-tunes/);
+    expect(minimapStatusText(capture, vision, withMinimap("tracking", 4))).toBe("Following you ✓");
     expect(minimapStatusText(capture, vision, withMinimap("uncertain", 0, "minimap hidden"))).toMatch(/minimap hidden/);
   });
 });

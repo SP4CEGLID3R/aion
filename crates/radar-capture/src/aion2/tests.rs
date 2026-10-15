@@ -561,3 +561,68 @@ fn minimap_calibration_is_kept_for_the_next_session() {
     cfg.apply_learned(&learned);
     assert_eq!(cfg.minimap_hint, Some(cal));
 }
+
+#[test]
+fn between_fixes_the_height_follows_the_ground_around_us() {
+    let mut d = identified(9180);
+    let k = minimap::SEED_K;
+    // A hillside rising 1 m per 4 m to the east; things stand around on it.
+    let ground = |x: f32| ME[2] + (x - ME[0]) * 0.25;
+    let mut id = 70_000;
+    for i in 0..20 {
+        for j in -3..=3 {
+            let x = ME[0] - 2_000.0 + i as f32 * 400.0 + (j * 37) as f32;
+            let y = ME[1] + j as f32 * 500.0;
+            let wobble = ((i * 7 + j * 3) % 5) as f32 * 8.0 - 16.0;
+            id += 1;
+            d.on_frame(
+                &f(
+                    [0x34, 0x36],
+                    spawn_body(id, 1_500_041, [x, y, ground(x) + wobble], 0),
+                ),
+                900,
+            );
+        }
+    }
+    let on_hill = |t: Millis| {
+        let p = east(t);
+        [p[0], p[1], ground(p[0])]
+    };
+    let mut last = None;
+    for i in 0..60i64 {
+        let t = 1_000 + i * 100;
+        let px = (on_hill(t)[0] - ME[0]) as f64 * k;
+        for e in d.on_minimap(&minimap_sample(t, 10.0 + px, 20.0)) {
+            last = Some((t, e));
+        }
+        if i == 2 || i == 12 {
+            // Two buffs on the way: the model is checked against them.
+            d.on_frame(&f([0x2a, 0x38], buff_a_body(9180, on_hill(t + 50))), t + 50);
+        }
+    }
+    let (
+        t,
+        WireEvent::Player {
+            pos,
+            height_accuracy,
+            ..
+        },
+    ) = last.unwrap()
+    else {
+        panic!()
+    };
+    // 23 m on from the last buff, 6 m higher: the height came along.
+    let truth = d.to_world(on_hill(t));
+    assert!(
+        (pos[2] - truth[2]).abs() < 0.6,
+        "{} vs {}",
+        pos[2],
+        truth[2]
+    );
+    assert!(truth[2] - d.to_world(on_hill(2_250))[2] > 5.0);
+    assert!(
+        height_accuracy.is_some_and(|h| h < 1.5),
+        "{height_accuracy:?}"
+    );
+    assert_eq!(d.status(t).ground.checks, 2);
+}

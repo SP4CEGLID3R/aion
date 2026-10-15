@@ -55,10 +55,12 @@ use crate::discovery::read_varint;
 use crate::framing::Frame;
 
 mod edge;
+mod ground;
 mod minimap;
 mod movement;
 
 pub use edge::{Edge, EdgeEstimator, EstimateStatus, RadiusSeed};
+pub use ground::{Ground, GroundModel, GroundStatus};
 pub use minimap::{LocKind, MinimapCalibration, MinimapFusion, MinimapStatus};
 pub use movement::{Anchor, MoveSource, MovementLearner, MovementStatus};
 
@@ -450,6 +452,8 @@ pub struct Aion2Status {
     pub minimap: MinimapStatus,
     pub movement: MovementStatus,
     pub estimate: EstimateStatus,
+    /// The ground height model behind the own height between fixes.
+    pub ground: GroundStatus,
     pub warnings: Vec<String>,
 }
 
@@ -491,8 +495,10 @@ pub struct Aion2Decoder {
     last_estimate_t: Millis,
     minimap: MinimapFusion,
     last_minimap_t: Option<Millis>,
-    /// Where the server last put us: positions between fixes keep its height.
+    /// Where the server last put us: positions between fixes keep its
+    /// height, unless the ground model knows better.
     last_fix_pos: Option<[f32; 3]>,
+    ground: GroundModel,
 }
 
 /// Client movement reports newer than this win over estimates.
@@ -547,6 +553,7 @@ impl Aion2Decoder {
             minimap: MinimapFusion::new(cfg.units_per_meter, cfg.minimap_hint.as_ref()),
             last_minimap_t: None,
             last_fix_pos: None,
+            ground: GroundModel::new(),
             cfg,
             server_clock: None,
             last_t: 0,
@@ -798,6 +805,7 @@ impl Aion2Decoder {
                 if self.map_id != Some(map) {
                     let changed = self.map_id.is_some();
                     self.map_id = Some(map);
+                    self.ground.clear();
                     if changed {
                         self.live.clear();
                         out.push(WireEvent::ZoneChanged {
@@ -822,6 +830,9 @@ impl Aion2Decoder {
                     self.objects.clear();
                 }
                 self.objects.insert(s.id, (s.template, s.pos));
+                if !self.is_cube_template(s.template) {
+                    self.ground.add(s.pos, t);
+                }
                 if self.cfg.estimate_position {
                     let age = s.created_ms.zip(self.server_now(t)).map(|(c, now)| now - c);
                     self.edge_event(s.id, s.template, s.pos, Edge::Enter, age, t, &mut out);
@@ -979,6 +990,8 @@ impl Aion2Decoder {
         self.last_fix_by_entity.insert(entity, (p, t));
         if self.self_id == Some(entity) {
             self.server_fix(p, t, false, out);
+        } else {
+            self.ground.add(p, t);
         }
     }
 
@@ -994,6 +1007,7 @@ impl Aion2Decoder {
     fn server_fix(&mut self, p: [f32; 3], t: Millis, zone: bool, out: &mut Vec<WireEvent>) {
         self.self_fix_t = Some(t);
         self.last_fix_pos = Some(p);
+        self.ground.on_fix(p);
         self.movement.on_server_fix(p, t);
         self.minimap.on_fix(t, p, zone);
         self.edge.on_truth(p, t, 150.0, true);
@@ -1075,17 +1089,7 @@ impl Aion2Decoder {
             })
         });
         self.last_pos = Some((p, t, src));
-        let height_accuracy = match src {
-            // Reported (or read) with the position.
-            PosSource::Server | PosSource::Client => None,
-            PosSource::Minimap | PosSource::Estimate => Some(match self.last_fix_pos {
-                Some(f) => {
-                    let moved = ((p[0] - f[0]) as f64).hypot((p[1] - f[1]) as f64);
-                    HEIGHT_FIX_ERR + HEIGHT_SLOPE * moved
-                }
-                None => HEIGHT_UNKNOWN,
-            }),
-        };
+        let (p, height_accuracy) = self.own_height(p, src);
         let k = 1.0 / self.cfg.units_per_meter;
         out.push(WireEvent::Player {
             t,
@@ -1095,6 +1099,27 @@ impl Aion2Decoder {
             accuracy: sigma.map(|s| s * k),
             height_accuracy: height_accuracy.map(|s| s * k),
         });
+    }
+
+    /// Our height with its 1-sigma uncertainty (`None`: measured). Server
+    /// and client reports carry it; between fixes it is the last fix's,
+    /// less sure the further we have gone, or the ground model's (from what
+    /// stands around us) when that is surer.
+    fn own_height(&self, p: [f32; 3], src: PosSource) -> ([f32; 3], Option<f64>) {
+        if matches!(src, PosSource::Server | PosSource::Client) {
+            return (p, None);
+        }
+        let from_fix = match self.last_fix_pos {
+            Some(f) => {
+                let moved = ((p[0] - f[0]) as f64).hypot((p[1] - f[1]) as f64);
+                HEIGHT_FIX_ERR + HEIGHT_SLOPE * moved
+            }
+            None => HEIGHT_UNKNOWN,
+        };
+        match self.ground.own_height(p) {
+            Some((z, sigma)) if sigma < from_fix => ([p[0], p[1], z as f32], Some(sigma)),
+            _ => (p, Some(from_fix)),
+        }
     }
 
     pub fn status(&self, now: Millis) -> Aion2Status {
@@ -1138,6 +1163,7 @@ impl Aion2Decoder {
             minimap: self.minimap.status(now),
             movement: self.movement.status(),
             estimate: self.edge.status(self.cfg.units_per_meter),
+            ground: self.ground.status(),
             warnings,
         }
     }

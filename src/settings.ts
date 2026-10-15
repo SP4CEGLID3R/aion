@@ -59,6 +59,8 @@ function sixDigit(hex: string): string {
 function fill(s: RadarSettings): void {
   current = s;
   for (const el of fields()) {
+    // Never overwrite what is being typed right now.
+    if (el === document.activeElement && el instanceof HTMLInputElement && el.type === "text") continue;
     const v = getPath(s, el.name);
     if (el instanceof HTMLInputElement && el.type === "checkbox") el.checked = Boolean(v);
     else if (el instanceof HTMLInputElement && el.type === "color") el.value = sixDigit(String(v ?? "#000000"));
@@ -320,6 +322,23 @@ async function fillDevices(): Promise<void> {
   }
 }
 
+let savedTimer = 0;
+
+async function apply(): Promise<void> {
+  try {
+    const res = await backend.updateSettings(read());
+    fill(res.settings);
+    showWarnings(res.warnings);
+    const saved = document.querySelector<HTMLElement>("#saved")!;
+    saved.textContent = "Saved ✓";
+    saved.classList.add("show");
+    window.clearTimeout(savedTimer);
+    savedTimer = window.setTimeout(() => saved.classList.remove("show"), 1500);
+  } catch (err) {
+    showWarnings([`Could not apply settings: ${String(err)}`]);
+  }
+}
+
 async function main(): Promise<void> {
   document.querySelector<HTMLElement>("#preview-note")!.hidden = !backend.isPreview;
   for (const sel of form.querySelectorAll<HTMLSelectElement>("select[data-axis]")) {
@@ -332,15 +351,16 @@ async function main(): Promise<void> {
   form.querySelector('[name="dataSource.kind"]')!.addEventListener("change", (e) => {
     showSourceSection((e.target as HTMLSelectElement).value);
   });
-  form.addEventListener("submit", async (e) => {
+  // Every change applies by itself (no Apply button to forget).
+  let applyTimer = 0;
+  form.addEventListener("change", () => {
+    window.clearTimeout(applyTimer);
+    applyTimer = window.setTimeout(() => void apply(), 250);
+  });
+  form.addEventListener("submit", (e) => {
     e.preventDefault();
-    try {
-      const res = await backend.updateSettings(read());
-      fill(res.settings);
-      showWarnings(res.warnings);
-    } catch (err) {
-      showWarnings([`Could not apply settings: ${String(err)}`]);
-    }
+    window.clearTimeout(applyTimer);
+    void apply();
   });
   document.querySelector("#test-sound")!.addEventListener("click", async () => {
     const result = document.querySelector<HTMLElement>("#test-sound-result")!;

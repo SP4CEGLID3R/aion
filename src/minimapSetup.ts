@@ -74,13 +74,11 @@ export function renderMinimapStatus(
   const parts: string[] = [];
   if (vision?.region) {
     const r = vision.region;
-    parts.push(
-      `Area ${r.width}×${r.height} at (${r.x}, ${r.y}) — ${vision.defaultRegion ? "the default spot" : "picked by you"}.`,
-    );
+    parts.push(vision.defaultRegion ? "Reading the usual spot." : `Reading the area you picked (${r.width}×${r.height}).`);
   }
   if (vision?.running) {
     parts.push(
-      `Camera direction ${vision.coneClear ? "seen" : "not visible"}; ${(vision.grabMs + vision.trackMs).toFixed(1)} ms per reading.`,
+      vision.coneClear ? "Camera direction: seen." : "Camera direction: not visible yet (the arrow over the game needs it).",
     );
   }
   $<HTMLElement>("#minimap-region-text").textContent = parts.join(" ");

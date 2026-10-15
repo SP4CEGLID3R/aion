@@ -10,11 +10,11 @@ rustfft = "6"
 log.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+# Screen copy only (GDI): nothing that opens other processes, reads or
+# writes their memory, or sends input or window messages.
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
-    "Win32_UI_HiDpi",
-    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]

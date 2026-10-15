@@ -8,11 +8,10 @@
   </head>
   <body>
     <main>
-      <h1>Cube radar — settings</h1>
-      <p class="lead">
-        Markers on the radar are <strong>confirmed, currently spawned cubes only</strong>. Static spawn points,
-        predicted locations and past locations are never drawn.
-      </p>
+      <header class="top">
+        <h1>Cube radar — settings</h1>
+        <span id="saved" class="saved" aria-live="polite"></span>
+      </header>
       <div id="preview-note" class="note warn" hidden>
         Browser preview: the Rust pipeline is not running, so settings are not validated and the debug panel is empty.
       </div>
@@ -20,42 +19,35 @@
 
       <form id="form" autocomplete="off">
         <fieldset>
-          <legend>Display</legend>
-          <label>Style
-            <select name="style">
-              <option value="radar">Radar — disc, rings, compass and a moving map grid</option>
-              <option value="minimap">Minimap overlay — cube markers only, to place over the game's minimap</option>
+          <legend>Game</legend>
+          <label>Cubes come from
+            <select name="dataSource.kind">
+              <option value="packet_capture">The game's network traffic (needs Npcap)</option>
+              <option value="synthetic">Made-up demo data</option>
+              <option value="replay">A recorded file</option>
+              <option value="local_tcp">Another program on this PC</option>
+              <option value="none">Nothing</option>
             </select>
           </label>
-          <p class="hint">Minimap overlay: put the radar window exactly over the game's minimap (top right), then set the range so the two scales match. The game's minimap is north-up, like the radar.</p>
-          <label>Range (world units, centre to rim) <input name="range" type="number" min="5" max="10000" step="5" /></label>
-          <label>Rotation
-            <select name="rotationMode">
-              <option value="north_up">North up</option>
-              <option value="heading_up">Heading up</option>
-            </select>
-          </label>
-          <label>Extra rotation (°) <input name="rotationOffsetDeg" type="number" step="1" /></label>
-          <label>Opacity <input name="opacity" type="range" min="0.1" max="1" step="0.05" /></label>
-          <label class="check"><input name="showLabels" type="checkbox" /> Labels</label>
-          <label class="check"><input name="showDistances" type="checkbox" /> Distances</label>
-          <label class="check"><input name="showIndicators" type="checkbox" /> Direction arrows for cubes beyond range</label>
-          <label class="check"><input name="showLegend" type="checkbox" /> Legend</label>
-          <label class="check"><input name="mapGrid" type="checkbox" /> Map grid fixed to the world (moves as you move)</label>
-          <label class="check"><input name="showTrail" type="checkbox" /> Your path over the last minute</label>
+          <p class="hint" data-source="packet_capture">
+            It only listens: nothing is sent to the game or changed. Install
+            <a href="https://npcap.com" target="_blank" rel="noreferrer">Npcap</a> first.
+          </p>
+          <div data-source="replay">
+            <label>File <input name="dataSource.path" type="text" placeholder="C:\path\to\session.jsonl" /></label>
+          </div>
+          <div data-source="local_tcp">
+            <label>Port <input name="dataSource.port" type="number" min="1024" max="65535" step="1" /></label>
+          </div>
         </fieldset>
 
         <fieldset id="minimap-section">
-          <legend>Minimap tracking</legend>
+          <legend>Your position</legend>
           <p class="hint">
-            Follows you between the server's position reports by reading the game's minimap (top right) from the
-            screen, like a screenshot: nothing touches the game. Run the game in <strong>borderless or windowed</strong>
-            mode. After logging in, open your wings once; open them again after moving 10 m or more and the minimap's
-            scale is confirmed.
+            The radar follows you by reading the game's minimap from the screen, 10 times a second. Run the game in
+            <strong>borderless or windowed</strong> mode and open your wings once after logging in.
           </p>
-          <label class="check"><input name="minimap.enabled" type="checkbox" /> Follow me with the in-game minimap</label>
-          <label class="check"><input name="minimap.background" type="checkbox" /> Show the live minimap behind the radar</label>
-          <label>Readings per second <input name="minimap.fps" type="number" min="4" max="20" step="1" /></label>
+          <label class="check"><input name="minimap.enabled" type="checkbox" /> Follow me with the game's minimap</label>
           <div class="minimap-box">
             <canvas id="minimap-preview" width="311" height="206" aria-label="What the radar reads from the screen"></canvas>
             <div class="minimap-info">
@@ -67,111 +59,94 @@
               </div>
             </div>
           </div>
-          <p class="hint">
-            While minimap tracking is on, the radar and the guide arrow are hidden from screenshots and recordings, so
-            they can sit over the minimap without disturbing it.
-          </p>
         </fieldset>
 
         <fieldset>
-          <legend>Cube guide</legend>
-          <p class="hint">
-            The arrows point at the nearest cube and say how far it is and whether it is <strong>up or down</strong>
-            (▲ 12 m up, ▼ 5 m down, same height). Your own height is exact right after the server reports your position
-            and less sure the further you go from there; when it is not sure enough the arrow says so, and opening your
-            wings once fixes it. Within a few metres the arrow turns into a green circle: the cube is right here.
-          </p>
-          <label class="check"><input name="guide.radarArrow" type="checkbox" /> Arrow around my marker on the radar, pointing at the nearest cube</label>
-          <label class="check"><input name="guide.screenArrow" type="checkbox" /> Arrow around my character in the game view (turns with the camera; needs minimap tracking)</label>
-          <label class="check"><input name="guide.beep" type="checkbox" /> Soft beeps as I get closer to the cube (from 30 m; they stop a few seconds after I stop going for it, and on arrival)</label>
-          <label>Beep volume <input name="guide.beepVolume" type="range" min="0" max="1" step="0.05" /></label>
-          <button type="button" id="test-beep" class="secondary">Test beep</button>
-          <label>Character on screen, across (0 = left, 1 = right) <input name="guide.screenX" type="number" min="0" max="1" step="0.01" /></label>
-          <label>Character on screen, down (0 = top, 1 = bottom) <input name="guide.screenY" type="number" min="0" max="1" step="0.01" /></label>
-          <label>Arrow ring width (px) <input name="guide.screenSize" type="number" min="80" max="1200" step="10" /></label>
-        </fieldset>
-
-        <fieldset>
-          <legend>Cube alert</legend>
-          <label class="check"><input name="alertSound.enabled" type="checkbox" /> Play a sound when a new cube appears on the radar</label>
-          <label>Volume <input name="alertSound.volume" type="range" min="0" max="1" step="0.05" /></label>
-          <label>Sound file (.wav, .mp3, .ogg, .flac) <input name="alertSound.file" type="text" placeholder="empty = built-in chime" /></label>
-          <p class="hint">Want a particular drop sound, such as one from a loot filter? Save it as a file on your PC and put its full path here, for example C:\Users\you\Sounds\divine.mp3.</p>
-          <button type="button" id="test-sound">Test sound</button>
-          <span id="test-sound-result" class="hint"></span>
-        </fieldset>
-
-        <fieldset>
-          <legend>Colours</legend>
-          <div class="colors">
-            <label>Background <input name="colors.background" type="color" /></label>
-            <label>Rings <input name="colors.ring" type="color" /></label>
-            <label>Player <input name="colors.player" type="color" /></label>
-            <label>Cube <input name="colors.cube" type="color" /></label>
-            <label>Stale <input name="colors.stale" type="color" /></label>
-            <label>Labels <input name="colors.label" type="color" /></label>
-            <label>Arrows <input name="colors.indicator" type="color" /></label>
+          <legend>Finding cubes</legend>
+          <label class="check"><input name="guide.screenArrow" type="checkbox" /> Arrow around my character: which way, how far, up or down</label>
+          <label class="check"><input name="alertSound.enabled" type="checkbox" /> A sound when a new cube appears</label>
+          <div class="row">
+            <label>Volume <input name="alertSound.volume" type="range" min="0" max="1" step="0.05" /></label>
+            <button type="button" id="test-sound" class="secondary">Test</button>
+            <span id="test-sound-result" class="hint"></span>
+          </div>
+          <label class="check"><input name="guide.beep" type="checkbox" /> Soft beeps while I walk to a cube</label>
+          <div class="row">
+            <label>Volume <input name="guide.beepVolume" type="range" min="0" max="1" step="0.05" /></label>
+            <button type="button" id="test-beep" class="secondary">Test</button>
           </div>
         </fieldset>
 
         <fieldset>
-          <legend>Stale data</legend>
-          <label>Stale after (s without confirmation) <input name="staleTimeoutSecs" type="number" min="1" max="600" step="1" /></label>
-          <label>Stale cubes
-            <select name="staleDisplay">
-              <option value="hide">Hide them</option>
-              <option value="mark_stale">Show them, clearly marked STALE</option>
+          <legend>Radar</legend>
+          <label>Range (m, centre to edge) <input name="range" type="number" min="5" max="10000" step="5" /></label>
+          <label>Map
+            <select name="rotationMode">
+              <option value="north_up">North up, like the game's minimap</option>
+              <option value="heading_up">Turns with me</option>
             </select>
           </label>
-          <label>Forget stale cubes after (s) <input name="staleRetainSecs" type="number" min="0" max="3600" step="1" /></label>
-        </fieldset>
-
-        <fieldset>
-          <legend>Window</legend>
+          <label>See-through <input name="opacity" type="range" min="0.1" max="1" step="0.05" /></label>
+          <label class="check"><input name="minimap.background" type="checkbox" /> Show the game's minimap inside the radar</label>
+          <label>Window
+            <select name="windowMode">
+              <option value="overlay">Over the game (transparent, always on top)</option>
+              <option value="separate">Normal window</option>
+            </select>
+          </label>
+          <label class="check"><input name="clickThrough" type="checkbox" /> Clicks go through the radar to the game (turn off here)</label>
           <div class="actions">
             <button type="button" id="desktop-shortcut" class="secondary">Create desktop shortcut</button>
             <span id="desktop-shortcut-result" class="hint"></span>
           </div>
-          <label>Mode
-            <select name="windowMode">
-              <option value="overlay">Overlay — transparent, always on top</option>
-              <option value="separate">Separate window — framed, not on top</option>
-            </select>
-          </label>
-          <label class="check"><input name="clickThrough" type="checkbox" /> Click-through (overlay mode; change back here)</label>
-          <label>Updates per second <input name="updateHz" type="number" min="1" max="60" step="1" /></label>
         </fieldset>
 
-        <fieldset>
-          <legend>Data source</legend>
-          <label>Source
-            <select name="dataSource.kind">
-              <option value="synthetic">Synthetic simulator (made-up data)</option>
-              <option value="replay">Replay a file (.jsonl, .srf, .srf.hex)</option>
-              <option value="local_tcp">Local telemetry on 127.0.0.1 (Radar Event Protocol v1)</option>
-              <option value="packet_capture">Packet capture — the game's own traffic (Npcap)</option>
-              <option value="none">None</option>
-            </select>
-          </label>
-          <div data-source="synthetic">
-            <label>Seed <input name="dataSource.seed" type="number" min="0" step="1" /></label>
-            <label>Cubes <input name="dataSource.cubeCount" type="number" min="0" max="200" step="1" /></label>
-          </div>
-          <div data-source="replay">
-            <label>File path <input name="dataSource.path" type="text" placeholder="C:\path\to\session.jsonl" /></label>
-            <label>Speed <input name="dataSource.speed" type="number" min="0.1" max="100" step="0.1" /></label>
-            <label class="check"><input name="dataSource.loop" type="checkbox" /> Loop</label>
-          </div>
-          <div data-source="local_tcp">
-            <label>Port <input name="dataSource.port" type="number" min="1024" max="65535" step="1" /></label>
-          </div>
-          <div data-source="packet_capture">
+        <details class="more">
+          <summary>More settings</summary>
+
+          <fieldset>
+            <legend>Radar details</legend>
+            <label>Style
+              <select name="style">
+                <option value="radar">Radar</option>
+                <option value="minimap">Markers only, to place over the game's minimap</option>
+              </select>
+            </label>
+            <label>Extra rotation (°) <input name="rotationOffsetDeg" type="number" step="1" /></label>
+            <label class="check"><input name="showDistances" type="checkbox" /> Distances next to cubes</label>
+            <label class="check"><input name="showLabels" type="checkbox" /> Cube names</label>
+            <label class="check"><input name="showIndicators" type="checkbox" /> Arrows on the edge for cubes further away</label>
+            <label class="check"><input name="mapGrid" type="checkbox" /> A grid when the game's minimap is not shown</label>
+            <label class="check"><input name="showTrail" type="checkbox" /> My path over the last minute</label>
+            <label class="check"><input name="showLegend" type="checkbox" /> Legend</label>
+            <label>Updates per second <input name="updateHz" type="number" min="1" max="60" step="1" /></label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Arrow over the game</legend>
+            <p class="hint">Where your character is on the screen, if the ring is not around it.</p>
+            <label>Across (0 = left, 1 = right) <input name="guide.screenX" type="number" min="0" max="1" step="0.01" /></label>
+            <label>Down (0 = top, 1 = bottom) <input name="guide.screenY" type="number" min="0" max="1" step="0.01" /></label>
+            <label>Ring width (px) <input name="guide.screenSize" type="number" min="80" max="1200" step="10" /></label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Minimap reading</legend>
+            <label>Readings per second <input name="minimap.fps" type="number" min="4" max="20" step="1" /></label>
             <p class="hint">
-              Passive and receive-only: copies this PC's game traffic, never touches the game or changes packets.
-              Needs <a href="https://npcap.com" target="_blank" rel="noreferrer">Npcap</a> on Windows. The built-in
-              decoder recognises hidden cubes in Verteron (verified) and learns other zones' cubes when you open one
-              with a key. The game only sends cubes within about 100 m of you.
+              While it runs, the radar and the arrow are hidden from screenshots and recordings, so they never get in
+              the way of reading the minimap.
             </p>
+          </fieldset>
+
+          <fieldset>
+            <legend>New-cube sound</legend>
+            <label>Your own sound file (.wav, .mp3, .ogg, .flac) <input name="alertSound.file" type="text" placeholder="empty = built-in chime" /></label>
+            <p class="hint">For example a loot-filter drop sound saved on your PC: C:\Users\you\Sounds\divine.mp3</p>
+          </fieldset>
+
+          <fieldset data-source="packet_capture">
+            <legend>Game traffic</legend>
             <label>Decoder
               <select name="dataSource.decoder">
                 <option value="aion2">AION 2 hidden cubes (built-in)</option>
@@ -179,67 +154,106 @@
                 <option value="none">None — record and count packets only</option>
               </select>
             </label>
+            <label>Network adapter
+              <select name="dataSource.device"><option value="">All (finds the game by itself)</option></select>
+            </label>
             <label>Map north is the game's
               <select name="dataSource.north">
-                <option value="neg_y">−Y axis (default; switch if the radar is mirrored vs. the minimap)</option>
+                <option value="neg_y">−Y axis (default; switch if the radar is mirrored)</option>
                 <option value="pos_y">+Y axis</option>
               </select>
             </label>
-            <label>Adapter
-              <select name="dataSource.device"><option value="">All adapters (find the game automatically)</option></select>
-            </label>
-            <label class="check"><input name="dataSource.includeUnconfirmed" type="checkbox" /> Also show unconfirmed cube types — marked "Hidden Cube?" (Verteron and Altgard are confirmed and always shown)</label>
+            <label class="check"><input name="dataSource.includeUnconfirmed" type="checkbox" /> Also show unconfirmed cube types (marked "?")</label>
             <label>Decoder profile (.json) <input name="dataSource.profilePath" type="text" placeholder="C:\path\to\aion2-profile.json" /></label>
-            <label>Replay a capture file instead (.pcap / .pcapng) <input name="dataSource.file" type="text" placeholder="leave empty for live capture" /></label>
-            <label class="check"><input name="dataSource.record" type="checkbox" /> Record the game connection and markers (for finding the cube packet)</label>
-          </div>
-        </fieldset>
+            <label>Replay a capture file (.pcap / .pcapng) <input name="dataSource.file" type="text" placeholder="empty = live" /></label>
+            <label class="check"><input name="dataSource.record" type="checkbox" /> Record the game connection (for finding new cube types)</label>
+          </fieldset>
 
-        <fieldset>
-          <legend>Source coordinate frame</legend>
-          <p class="hint">How the source's axes map to east / north / up. Leave as-is for the simulator.</p>
-          <div class="colors">
-            <label>East = <select name="coordinateTransform.east" data-axis></select></label>
-            <label>North = <select name="coordinateTransform.north" data-axis></select></label>
-            <label>Up = <select name="coordinateTransform.up" data-axis></select></label>
-          </div>
-          <label>Scale (world units per source unit) <input name="coordinateTransform.scale" type="number" step="any" min="0" /></label>
-          <label>Heading offset (°) <input name="coordinateTransform.headingOffsetDeg" type="number" step="any" /></label>
-          <label class="check"><input name="coordinateTransform.headingClockwise" type="checkbox" /> Source heading is clockwise</label>
-        </fieldset>
+          <fieldset data-source="synthetic">
+            <legend>Demo data</legend>
+            <label>Seed <input name="dataSource.seed" type="number" min="0" step="1" /></label>
+            <label>Cubes <input name="dataSource.cubeCount" type="number" min="0" max="200" step="1" /></label>
+          </fieldset>
 
-        <div class="actions">
-          <button type="submit">Apply</button>
-          <button type="button" id="reset">Reset to defaults</button>
-        </div>
+          <fieldset data-source="replay">
+            <legend>Replay</legend>
+            <label>Speed <input name="dataSource.speed" type="number" min="0.1" max="100" step="0.1" /></label>
+            <label class="check"><input name="dataSource.loop" type="checkbox" /> Loop</label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Old cubes</legend>
+            <label>Unconfirmed after (s) <input name="staleTimeoutSecs" type="number" min="1" max="600" step="1" /></label>
+            <label>Unconfirmed cubes
+              <select name="staleDisplay">
+                <option value="hide">Hide them</option>
+                <option value="mark_stale">Show them, marked STALE</option>
+              </select>
+            </label>
+            <label>Forget them after (s) <input name="staleRetainSecs" type="number" min="0" max="3600" step="1" /></label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Colours</legend>
+            <div class="colors">
+              <label>Background <input name="colors.background" type="color" /></label>
+              <label>Rim <input name="colors.ring" type="color" /></label>
+              <label>You <input name="colors.player" type="color" /></label>
+              <label>Cube <input name="colors.cube" type="color" /></label>
+              <label>Old cube <input name="colors.stale" type="color" /></label>
+              <label>Text <input name="colors.label" type="color" /></label>
+              <label>Edge arrows <input name="colors.indicator" type="color" /></label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Source coordinate frame</legend>
+            <p class="hint">Only for other data sources: how their axes map to east / north / up.</p>
+            <div class="colors">
+              <label>East = <select name="coordinateTransform.east" data-axis></select></label>
+              <label>North = <select name="coordinateTransform.north" data-axis></select></label>
+              <label>Up = <select name="coordinateTransform.up" data-axis></select></label>
+            </div>
+            <label>Scale (world units per source unit) <input name="coordinateTransform.scale" type="number" step="any" min="0" /></label>
+            <label>Heading offset (°) <input name="coordinateTransform.headingOffsetDeg" type="number" step="any" /></label>
+            <label class="check"><input name="coordinateTransform.headingClockwise" type="checkbox" /> Source heading is clockwise</label>
+          </fieldset>
+
+          <div class="actions">
+            <button type="button" id="reset" class="secondary">Reset everything to defaults</button>
+          </div>
+        </details>
       </form>
 
-      <section id="capture" hidden>
-        <h2>Packet capture</h2>
-        <p class="hint">
-          While recording: press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> in game the moment a cube appears, and
-          <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> when you collect one. Then run
-          <code>radar-capture analyze</code> on the recording (see the README).
-        </p>
-        <div class="actions">
-          <button type="button" id="mark-visible">Mark: cube appeared</button>
-          <button type="button" id="mark-collected">Mark: cube collected</button>
-        </div>
-        <div id="capture-notes" class="note warn" hidden></div>
-        <div id="capture-summary"></div>
-        <h3>Packet types seen (most frequent first)</h3>
-        <table id="capture-census"><thead><tr><th>opcode</th><th>count</th><th>size</th><th>bundled</th><th>decoded</th></tr></thead><tbody></tbody></table>
-      </section>
+      <details class="more">
+        <summary>Diagnostics</summary>
+        <section id="capture" hidden>
+          <h2>Packet capture</h2>
+          <p class="hint">
+            While recording: press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> in game the moment a cube appears, and
+            <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> when you collect one. Then run
+            <code>radar-capture analyze</code> on the recording (see the README).
+          </p>
+          <div class="actions">
+            <button type="button" id="mark-visible">Mark: cube appeared</button>
+            <button type="button" id="mark-collected">Mark: cube collected</button>
+          </div>
+          <div id="capture-notes" class="note warn" hidden></div>
+          <div id="capture-summary"></div>
+          <h3>Packet types seen (most frequent first)</h3>
+          <table id="capture-census"><thead><tr><th>opcode</th><th>count</th><th>size</th><th>bundled</th><th>decoded</th></tr></thead><tbody></tbody></table>
+        </section>
 
-      <section id="debug">
-        <h2>Diagnostics</h2>
-        <p class="hint">For debugging only. Nothing in this panel is ever drawn on the radar.</p>
-        <div id="debug-summary"></div>
-        <h3>Tracked cubes</h3>
-        <table id="debug-cubes"><thead><tr><th>id</th><th>state</th><th>position</th><th>last confirmed</th></tr></thead><tbody></tbody></table>
-        <h3>Event history (newest first)</h3>
-        <table id="debug-history"><thead><tr><th>time</th><th>event</th><th>id</th><th>provenance</th><th>outcome</th></tr></thead><tbody></tbody></table>
-      </section>
+        <section id="debug">
+          <h2>Radar state</h2>
+          <p class="hint">For debugging only. Nothing in this panel is ever drawn on the radar.</p>
+          <div id="debug-summary"></div>
+          <h3>Tracked cubes</h3>
+          <table id="debug-cubes"><thead><tr><th>id</th><th>state</th><th>position</th><th>last confirmed</th></tr></thead><tbody></tbody></table>
+          <h3>Event history (newest first)</h3>
+          <table id="debug-history"><thead><tr><th>time</th><th>event</th><th>id</th><th>provenance</th><th>outcome</th></tr></thead><tbody></tbody></table>
+        </section>
+      </details>
     </main>
     <dialog id="picker">
       <div class="picker-head">

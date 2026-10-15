@@ -58,15 +58,11 @@ describe("layoutMarkers", () => {
     expect(layoutMarkers([cube("a", 0, 25)], origin, view, onlyDist)[0]?.text).toBe("25");
   });
 
-  it("says up or down when the height is clearly different", () => {
-    const [m] = layoutMarkers([cube("hi", 0, 25, "SPAWNED", 12.4)], origin, view, all);
-    expect(m?.text).toBe("Cube hi · 25 · ▲12");
-    // Your own height is unsure by 8 m: 12 m up is not clear enough.
-    expect(layoutMarkers([cube("hi", 0, 25, "SPAWNED", 12.4)], origin, view, all, 8)[0]?.text).toBe("Cube hi · 25");
-    const [far] = layoutMarkers([cube("low", 200, 0, "SPAWNED", -9)], origin, view, all, 2);
-    expect(far?.text).toBe("200 ▼~9");
-    // Never for stale cubes.
-    expect(layoutMarkers([cube("s", 0, 10, "STALE", 20)], origin, view, all)[0]?.text).toBe("Cube s · 10 · STALE");
+  it("keeps the radar clean: no heights, a ? for unconfirmed types", () => {
+    const clean = { showLabels: false, showDistances: true, showIndicators: true };
+    expect(layoutMarkers([cube("hi", 0, 25, "SPAWNED", 12.4)], origin, view, clean)[0]?.text).toBe("25");
+    const unsure = { ...cube("u", 0, 25), label: "Hidden Cube? (Verteron, unconfirmed type)" };
+    expect(layoutMarkers([unsure], origin, view, clean)[0]?.text).toBe("? · 25");
   });
 
   it("orders the nearest cube last so it draws on top", () => {

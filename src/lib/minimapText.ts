@@ -19,7 +19,8 @@ export function minimapStatusText(
   capture: CaptureStatus | null,
 ): string {
   if (!s?.minimap.enabled) return "Off.";
-  if (!wantsMinimap(s)) return "Needs Data source → Packet capture (live) with the AION 2 decoder.";
+  if (s.dataSource.kind !== "packet_capture") return 'Works when "Cubes come from" is the game\'s network traffic.';
+  if (!wantsMinimap(s)) return "Needs the AION 2 decoder on live traffic (More settings → Game traffic).";
   if (!vision) return "Starting…";
   if (vision.error) return `Screen capture failed: ${vision.error}`;
   if (vision.black)
@@ -27,7 +28,6 @@ export function minimapStatusText(
   if (vision.frozen) return "The picture is not changing: is the game minimised, or is the area wrong?";
   const m = capture?.aion2?.minimap;
   if (!m) return "Waiting for the game connection…";
-  const scale = m.pxPerM ? `${m.pxPerM.toFixed(2)} px/m` : "";
   switch (m.state) {
     case "no frames":
       return "Waiting for the first picture…";
@@ -35,10 +35,10 @@ export function minimapStatusText(
       return "Open your wings once so the radar knows where you are.";
     case "tracking":
       return m.legs >= 3
-        ? `Following you (scale ${scale}, confirmed).`
-        : `Following you (default scale ${scale}; open your wings again after moving 10 m or more to confirm it).`;
+        ? "Following you ✓"
+        : "Following you ✓ (opening your wings a couple more times as you go fine-tunes the map scale)";
     case "recalibrating":
-      return "The minimap zoom seems to have changed: open your wings after moving, to re-measure.";
+      return "The minimap zoom changed: open your wings after walking a bit, to re-measure.";
     default:
       return `Not sure right now: ${m.reason || "waiting"}.`;
   }
