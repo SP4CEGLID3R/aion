@@ -82,6 +82,41 @@ export async function playAlert(cfg: AlertSound): Promise<void> {
   src.start();
 }
 
+/** Loudness of the proximity beeps at full volume: well below the alert. */
+const BEEP_MAX_GAIN = 0.16;
+
+/** A soft sine blip with a gentle start, so it never clicks. */
+function blip(ac: AudioContext, pitch: number, at: number, len: number, level: number): void {
+  const o = ac.createOscillator();
+  const g = ac.createGain();
+  o.type = "sine";
+  o.frequency.value = pitch;
+  g.gain.setValueAtTime(0, at);
+  g.gain.linearRampToValueAtTime(level, at + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + len);
+  o.connect(g).connect(ac.destination);
+  o.start(at);
+  o.stop(at + len + 0.01);
+}
+
+/** One quiet proximity beep. `volume`: 0 – 1. */
+export function playBeep(volume: number, pitch: number): void {
+  const level = BEEP_MAX_GAIN * Math.min(1, Math.max(0, volume));
+  if (level <= 0) return;
+  const ac = audio();
+  blip(ac, pitch, ac.currentTime + 0.005, 0.12, level);
+}
+
+/** Two soft rising notes: you have reached the cube. */
+export function playArrived(volume: number): void {
+  const level = BEEP_MAX_GAIN * Math.min(1, Math.max(0, volume));
+  if (level <= 0) return;
+  const ac = audio();
+  const t0 = ac.currentTime + 0.005;
+  blip(ac, 784, t0, 0.25, level); // G5
+  blip(ac, 1047, t0 + 0.13, 0.35, level); // C6
+}
+
 /** Why the chosen file could not be played, if it could not. */
 export function alertError(): string | null {
   return lastError;

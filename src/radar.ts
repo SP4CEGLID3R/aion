@@ -3,9 +3,10 @@
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { backend } from "./lib/bridge";
+import { beepPitch, isHere, nearestLive, ProximityBeeper } from "./lib/guide";
 import { lerp, lerpAngleDeg, viewUpDeg, type View } from "./lib/projection";
 import { drawScene, type MinimapBackground } from "./lib/renderer";
-import { AlertGate, playAlert } from "./lib/sound";
+import { AlertGate, playAlert, playArrived, playBeep } from "./lib/sound";
 import { DEFAULT_SETTINGS, type RadarFrame, type RadarSettings, type WorldPos } from "./lib/types";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#radar")!;
@@ -23,6 +24,7 @@ let prev: { frame: RadarFrame; at: number } | null = null;
 let cur: { frame: RadarFrame; at: number } | null = null;
 let size = { w: 0, h: 0, dpr: 1 };
 const alertGate = new AlertGate();
+const beeper = new ProximityBeeper();
 
 // The live game minimap, drawn behind the radar.
 let background: MinimapBackground | null = null;
@@ -91,6 +93,24 @@ function maybeAlert(frame: RadarFrame, now: number): void {
   }
 }
 
+/** Soft beeps towards the nearest cube, while your position is current. */
+function maybeBeep(frame: RadarFrame | null, backendSilent: boolean, now: number): void {
+  const p = frame?.player;
+  const usable =
+    settings.guide.beep && !backendSilent && p && !p.stale && (p.accuracyM === null || p.accuracyM <= 15);
+  const cube = usable && frame ? nearestLive(frame.cubes) : null;
+  const distance = cube?.distance ?? null;
+  const here = distance !== null && isHere(distance, p?.accuracyM ?? null);
+  const beep = beeper.step(cube?.id ?? null, distance, here, now);
+  if (!beep || distance === null) return;
+  try {
+    if (beep === "arrived") playArrived(settings.guide.beepVolume);
+    else playBeep(settings.guide.beepVolume, beepPitch(distance));
+  } catch (e) {
+    console.error("beep", e);
+  }
+}
+
 function applySettings(s: RadarSettings): void {
   settings = s;
   root.style.opacity = String(s.opacity);
@@ -154,6 +174,7 @@ function render(): void {
       cubes: backendSilent || !frame ? [] : frame.cubes,
       view,
       accuracyM: backendSilent ? null : (frame?.player?.accuracyM ?? null),
+      heightAccuracyM: frame?.player?.heightAccuracyM ?? null,
       trail: trail.map((t) => t.pos).concat(pose.pos ? [pose.pos] : []),
       background: backendSilent ? null : background,
     },
@@ -162,6 +183,7 @@ function render(): void {
   );
 
   setBanner(bannerText(frame, backendSilent));
+  if (!backend.isPreview) maybeBeep(frame, backendSilent, now);
   requestAnimationFrame(render);
 }
 

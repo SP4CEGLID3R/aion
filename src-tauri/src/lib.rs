@@ -37,6 +37,8 @@ const RADAR: &str = "radar";
 const SETTINGS: &str = "settings";
 /// The arrow around the character, over the game.
 const GUIDE: &str = "guide";
+/// The guide window's width and height as multiples of the ring's width.
+const GUIDE_AREA: (f64, f64) = (2.2, 1.3);
 const FRAME_EVENT: &str = "radar-frame";
 const SETTINGS_EVENT: &str = "settings-changed";
 const MARKER_EVENT: &str = "capture-marker";
@@ -355,8 +357,13 @@ fn sync_guide_window(app: &AppHandle, s: &RadarSettings) {
         return;
     };
     let (mx, my, mw, mh) = monitor_rect(&mon);
+    // The ring is `screen_size` wide; the window leaves room around it for
+    // the labels (src/guide.ts draws to the same proportions).
     let size = s.guide.screen_size;
-    let (w_px, h_px) = (size.round() as u32, (size * 0.75).round() as u32);
+    let (w_px, h_px) = (
+        (size * GUIDE_AREA.0).round() as u32,
+        (size * GUIDE_AREA.1).round() as u32,
+    );
     let x = mx + (s.guide.screen_x * mw as f64 - w_px as f64 / 2.0).round() as i32;
     let y = my + (s.guide.screen_y * mh as f64 - h_px as f64 / 2.0).round() as i32;
     let scale = mon.scale_factor().max(0.1);

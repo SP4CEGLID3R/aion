@@ -80,6 +80,10 @@ pub struct PlayerUpdate {
     /// 1-sigma uncertainty in metres when the position is estimated.
     #[serde(default)]
     pub accuracy_m: Option<f64>,
+    /// 1-sigma uncertainty of the height in metres, when it was not measured
+    /// with this position.
+    #[serde(default)]
+    pub height_accuracy_m: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

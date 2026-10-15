@@ -9,11 +9,11 @@ import type { CubeState, RadarFrame, RadarSettings } from "./types";
 export function startPreviewFrames(cb: (f: RadarFrame) => void, settings: () => RadarSettings): () => void {
   const start = Date.now();
   const cubes = [
-    { id: "preview-1", label: "Cube #1", x: 40, y: 55 },
-    { id: "preview-2", label: "Cube #2", x: -70, y: 20 },
-    { id: "preview-3", label: "Cube #3", x: 15, y: -95 },
-    { id: "preview-4", label: "Cube #4", x: 260, y: 140 },
-    { id: "preview-5", label: "Cube #5", x: -30, y: -40, stale: true },
+    { id: "preview-1", label: "Cube #1", x: 40, y: 55, z: 12 },
+    { id: "preview-2", label: "Cube #2", x: -70, y: 20, z: -6 },
+    { id: "preview-3", label: "Cube #3", x: 15, y: -95, z: 0 },
+    { id: "preview-4", label: "Cube #4", x: 260, y: 140, z: 3 },
+    { id: "preview-5", label: "Cube #5", x: -30, y: -40, z: 0, stale: true },
   ];
   const tick = () => {
     const now = Date.now();
@@ -25,16 +25,24 @@ export function startPreviewFrames(cb: (f: RadarFrame) => void, settings: () => 
     cb({
       generatedAt: now,
       zone: "preview",
-      player: { pos: { x: px, y: py, z: 0 }, headingDeg: heading, ageMs: 0, stale: false, accuracyM: null },
+      player: {
+        pos: { x: px, y: py, z: 0 },
+        headingDeg: heading,
+        ageMs: 0,
+        stale: false,
+        accuracyM: null,
+        heightAccuracyM: null,
+      },
       cubes: cubes
         .filter((c) => !c.stale || showStale)
         .map((c) => ({
           id: c.id,
           label: c.label,
           state: (c.stale ? "STALE" : "SPAWNED") as CubeState,
-          pos: { x: c.x, y: c.y, z: 0 },
+          pos: { x: c.x, y: c.y, z: c.z },
           distance: Math.hypot(c.x - px, c.y - py),
-          bearingDeg: null,
+          bearingDeg: (((Math.atan2(c.x - px, c.y - py) * 180) / Math.PI) + 360) % 360,
+          height: c.z,
           confirmedAgeMs: c.stale ? 14_000 : 400,
         })),
       stats: { spawned: 4, stale: 1, tracked: 5, accepted: 0, duplicates: 0, rejected: 0 },

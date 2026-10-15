@@ -26,6 +26,9 @@ pub struct PlayerView {
     pub stale: bool,
     /// 1-sigma uncertainty in metres when the position is an estimate.
     pub accuracy_m: Option<f64>,
+    /// 1-sigma uncertainty of the height in metres, when the height was not
+    /// measured with the position; `None` = measured.
+    pub height_accuracy_m: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -40,6 +43,9 @@ pub struct CubeView {
     pub distance: Option<f64>,
     /// Compass bearing from the player; `None` without a player position.
     pub bearing_deg: Option<f64>,
+    /// Height above the player (negative: below); `None` without a player
+    /// position.
+    pub height: Option<f64>,
     /// Time since the cube was last confirmed present.
     pub confirmed_age_ms: Millis,
 }

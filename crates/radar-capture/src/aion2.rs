@@ -491,6 +491,8 @@ pub struct Aion2Decoder {
     last_estimate_t: Millis,
     minimap: MinimapFusion,
     last_minimap_t: Option<Millis>,
+    /// Where the server last put us: positions between fixes keep its height.
+    last_fix_pos: Option<[f32; 3]>,
 }
 
 /// Client movement reports newer than this win over estimates.
@@ -499,6 +501,13 @@ const CLIENT_FRESH_MS: Millis = 1_500;
 const MINIMAP_FRESH_MS: Millis = 1_500;
 /// Estimates are moved forward this often between events.
 const ESTIMATE_EVERY_MS: Millis = 250;
+/// Own height between server fixes (game units): the minimap and the range
+/// estimate only move us across the map, so the height is the last fix's.
+/// Its 1-sigma error: the fix's own, plus the ground rising or falling by up
+/// to this slope over the distance moved since; unknown without a fix.
+const HEIGHT_FIX_ERR: f64 = 50.0;
+const HEIGHT_SLOPE: f64 = 0.2;
+const HEIGHT_UNKNOWN: f64 = 5_000.0;
 
 const MAX_OBJECTS: usize = 20_000;
 const MAX_FIXES: usize = 2_000;
@@ -537,6 +546,7 @@ impl Aion2Decoder {
             edge: EdgeEstimator::new(&cfg.object_radii),
             minimap: MinimapFusion::new(cfg.units_per_meter, cfg.minimap_hint.as_ref()),
             last_minimap_t: None,
+            last_fix_pos: None,
             cfg,
             server_clock: None,
             last_t: 0,
@@ -588,6 +598,7 @@ impl Aion2Decoder {
         self.last_client_t = None;
         self.last_minimap_t = None;
         self.last_estimate_t = 0;
+        self.last_fix_pos = None;
     }
 
     /// What was learned in game (with earlier sessions' results), to keep
@@ -982,6 +993,7 @@ impl Aion2Decoder {
     /// The server told us where we are (`zone`: a map load or teleport).
     fn server_fix(&mut self, p: [f32; 3], t: Millis, zone: bool, out: &mut Vec<WireEvent>) {
         self.self_fix_t = Some(t);
+        self.last_fix_pos = Some(p);
         self.movement.on_server_fix(p, t);
         self.minimap.on_fix(t, p, zone);
         self.edge.on_truth(p, t, 150.0, true);
@@ -1063,12 +1075,25 @@ impl Aion2Decoder {
             })
         });
         self.last_pos = Some((p, t, src));
+        let height_accuracy = match src {
+            // Reported (or read) with the position.
+            PosSource::Server | PosSource::Client => None,
+            PosSource::Minimap | PosSource::Estimate => Some(match self.last_fix_pos {
+                Some(f) => {
+                    let moved = ((p[0] - f[0]) as f64).hypot((p[1] - f[1]) as f64);
+                    HEIGHT_FIX_ERR + HEIGHT_SLOPE * moved
+                }
+                None => HEIGHT_UNKNOWN,
+            }),
+        };
+        let k = 1.0 / self.cfg.units_per_meter;
         out.push(WireEvent::Player {
             t,
             pos: self.to_world(p),
             heading,
             zone: None,
-            accuracy: sigma.map(|s| s / self.cfg.units_per_meter),
+            accuracy: sigma.map(|s| s * k),
+            height_accuracy: height_accuracy.map(|s| s * k),
         });
     }
 

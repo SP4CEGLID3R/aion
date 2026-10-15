@@ -487,6 +487,7 @@ impl Tracker {
             age_ms: now - p.observed_at,
             stale: now - p.observed_at > timeout,
             accuracy_m: p.accuracy_m,
+            height_accuracy_m: p.height_accuracy_m,
         });
 
         let mut stats = FrameStats {
@@ -513,12 +514,16 @@ impl Tracker {
             if state == CubeState::Stale && stale_display == StaleDisplay::Hide {
                 continue;
             }
-            let (distance, bearing_deg) = match &player {
+            let (distance, bearing_deg, height) = match &player {
                 Some(p) => {
                     let off = p.pos.offset_to(&pos);
-                    (Some(off.horizontal_distance()), off.bearing_deg())
+                    (
+                        Some(off.horizontal_distance()),
+                        off.bearing_deg(),
+                        Some(off.up),
+                    )
                 }
-                None => (None, None),
+                None => (None, None, None),
             };
             cubes.push(CubeView {
                 id: rec.id.clone(),
@@ -527,6 +532,7 @@ impl Tracker {
                 pos,
                 distance,
                 bearing_deg,
+                height,
                 confirmed_age_ms: confirmed_age.unwrap_or_default(),
             });
         }

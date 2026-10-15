@@ -7,14 +7,15 @@ const view: View = { cx: 100, cy: 100, radiusPx: 100, range: 50, upDeg: 0 };
 const all = { showLabels: true, showDistances: true, showIndicators: true };
 const origin = { x: 0, y: 0, z: 0 };
 
-function cube(id: string, x: number, y: number, state: CubeState = "SPAWNED"): CubeView {
+function cube(id: string, x: number, y: number, state: CubeState = "SPAWNED", height: number | null = 0): CubeView {
   return {
     id,
     label: `Cube ${id}`,
     state,
-    pos: { x, y, z: 0 },
+    pos: { x, y, z: height ?? 0 },
     distance: null,
     bearingDeg: null,
+    height,
     confirmedAgeMs: 0,
   };
 }
@@ -55,6 +56,17 @@ describe("layoutMarkers", () => {
     expect(layoutMarkers([cube("a", 0, 25)], origin, view, none)[0]?.text).toBeNull();
     const onlyDist = { ...none, showDistances: true };
     expect(layoutMarkers([cube("a", 0, 25)], origin, view, onlyDist)[0]?.text).toBe("25");
+  });
+
+  it("says up or down when the height is clearly different", () => {
+    const [m] = layoutMarkers([cube("hi", 0, 25, "SPAWNED", 12.4)], origin, view, all);
+    expect(m?.text).toBe("Cube hi · 25 · ▲12");
+    // Your own height is unsure by 8 m: 12 m up is not clear enough.
+    expect(layoutMarkers([cube("hi", 0, 25, "SPAWNED", 12.4)], origin, view, all, 8)[0]?.text).toBe("Cube hi · 25");
+    const [far] = layoutMarkers([cube("low", 200, 0, "SPAWNED", -9)], origin, view, all, 2);
+    expect(far?.text).toBe("200 ▼~9");
+    // Never for stale cubes.
+    expect(layoutMarkers([cube("s", 0, 10, "STALE", 20)], origin, view, all)[0]?.text).toBe("Cube s · 10 · STALE");
   });
 
   it("orders the nearest cube last so it draws on top", () => {

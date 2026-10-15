@@ -66,6 +66,10 @@ pub enum WireEvent {
         /// position is an estimate rather than a report.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         accuracy: Option<f64>,
+        /// How far off the height may be (1 sigma, source units), when it was
+        /// not measured with this position (e.g. kept from an earlier fix).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height_accuracy: Option<f64>,
     },
     CubeSpawned {
         t: Millis,

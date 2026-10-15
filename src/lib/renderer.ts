@@ -1,6 +1,6 @@
 // Canvas drawing. Layout decisions live in layout.ts; this file only paints.
 
-import { formatMetres, nearestLive } from "./guide";
+import { formatMetres, heightCue, heightShort, nearestLive } from "./guide";
 import { layoutMarkers, type MarkerLayout } from "./layout";
 import { gridSegments, gridStep } from "./mapgrid";
 import { DEG, formatDistance, pointAt, projectWorld, screenAngle, type View } from "./projection";
@@ -23,6 +23,8 @@ export interface Scene {
   view: View;
   /** 1-sigma uncertainty of an estimated position, metres. */
   accuracyM?: number | null;
+  /** 1-sigma uncertainty of the player's height, metres; null = measured. */
+  heightAccuracyM?: number | null;
   /** Recent own positions, oldest first. */
   trail?: readonly WorldPos[];
   background?: MinimapBackground | null;
@@ -78,7 +80,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
 
   drawCompass(ctx, scene);
 
-  const markers = layoutMarkers(scene.cubes, scene.player, view, settings);
+  const markers = layoutMarkers(scene.cubes, scene.player, view, settings, scene.heightAccuracyM ?? null);
   for (const m of markers) drawMarker(ctx, m, settings, width);
 
   if (scene.player) {
@@ -138,8 +140,12 @@ function drawGuide(ctx: CanvasRenderingContext2D, scene: Scene): void {
   ctx.fill();
   ctx.stroke();
   ctx.restore();
+  // Within range the cube's own label already says how far and how high.
+  if (settings.showDistances && target.distance <= view.range) return;
   const tp = pointAt(angle, ring + 18, view);
-  label(ctx, formatMetres(target.distance), tp.x, tp.y, settings.colors.cube, "center");
+  const height = heightShort(heightCue(target.height, scene.heightAccuracyM ?? null));
+  const text = height ? `${formatMetres(target.distance)} ${height}` : formatMetres(target.distance);
+  label(ctx, text, tp.x, tp.y, settings.colors.cube, "center");
 }
 
 /** Markers only, on a clear background, for laying over the game's minimap. */
@@ -151,7 +157,7 @@ function drawMinimapScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
   ctx.strokeStyle = withAlpha(settings.colors.ring, 0.35);
   ctx.lineWidth = 1;
   ctx.stroke();
-  const markers = layoutMarkers(scene.cubes, scene.player, view, settings);
+  const markers = layoutMarkers(scene.cubes, scene.player, view, settings, scene.heightAccuracyM ?? null);
   for (const m of markers) drawMarker(ctx, m, settings, width);
   if (scene.player) {
     drawAccuracy(ctx, scene);
@@ -308,9 +314,12 @@ function drawMarker(ctx: CanvasRenderingContext2D, m: MarkerLayout, settings: Ra
   if (m.text) {
     const color = m.kind === "live" ? c.label : c.stale;
     ctx.font = FONT;
-    // Flip the label to the left of the marker rather than clip it at the edge.
-    const fits = m.x + 10 + ctx.measureText(m.text).width <= width - 2;
-    label(ctx, m.text, fits ? m.x + 10 : m.x - 10, m.y, color, fits ? "left" : "right");
+    // Right of the marker; flipped to the left rather than clipped at the
+    // edge; below it, kept inside, when neither side has room.
+    const tw = ctx.measureText(m.text).width;
+    if (m.x + 10 + tw <= width - 2) label(ctx, m.text, m.x + 10, m.y, color, "left");
+    else if (m.x - 10 - tw >= 2) label(ctx, m.text, m.x - 10, m.y, color, "right");
+    else label(ctx, m.text, Math.max(2, Math.min(width - 2 - tw, m.x - tw / 2)), m.y + 14, color, "left");
   }
 }
 
@@ -325,6 +334,7 @@ function label(
   ctx.font = FONT;
   ctx.textAlign = align;
   ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
   ctx.lineWidth = 3;
   ctx.strokeStyle = "rgba(0,0,0,0.75)";
   ctx.strokeText(text, x, y);

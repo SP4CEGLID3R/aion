@@ -263,8 +263,9 @@ pub mod aion2_layout {
 
     /// `seconds` of a server→client game stream starting at `t0` (ms): a
     /// heartbeat every 50 ms, a self-buff every 3 s, a cube appearing about
-    /// 60 m away every 20 s; each is opened after 12 s (or, every third one,
-    /// leaves the send range), plus objects that are not cubes.
+    /// 60 m away (12 m up, 5 m down or level) every 20 s; each is opened
+    /// after 12 s (or, every third one, leaves the send range), plus objects
+    /// that are not cubes.
     pub fn session(t0: f64, seconds: u32) -> Vec<Record> {
         let server: SocketAddr = "198.51.100.30:13328".parse().unwrap();
         let client: SocketAddr = "192.168.0.10:50123".parse().unwrap();
@@ -287,12 +288,14 @@ pub mod aion2_layout {
             if tick % 400 == 40 {
                 let p = player(rel);
                 let a = tick as f32 * 0.37;
+                let id = next_id;
+                // Some up on a ledge, some down in a hollow, some level.
+                let up = [1_200.0, -500.0, 100.0][(id % 3) as usize];
                 let pos = [
                     p[0] + 6_000.0 * a.cos(),
                     p[1] + 6_000.0 * a.sin(),
-                    p[2] + 300.0,
+                    p[2] + up,
                 ];
-                let id = next_id;
                 next_id += 1;
                 let frame = spawn(id, CUBE_TEMPLATE, pos);
                 // Some arrive inside compressed bundles, like real traffic.

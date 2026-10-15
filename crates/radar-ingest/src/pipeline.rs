@@ -326,6 +326,7 @@ mod tests {
         let events = vec![
             WireEvent::Player {
                 accuracy: None,
+                height_accuracy: None,
                 t,
                 pos: [0.0; 3],
                 heading: None,

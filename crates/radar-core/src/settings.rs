@@ -93,6 +93,10 @@ pub struct GuideSettings {
     pub screen_y: f64,
     /// Size of the on-screen arrow ring, physical pixels.
     pub screen_size: f64,
+    /// Soft beeps, faster as you get closer to the nearest cube.
+    pub beep: bool,
+    /// 0 – 1; quiet by default.
+    pub beep_volume: f64,
 }
 
 impl Default for GuideSettings {
@@ -103,6 +107,8 @@ impl Default for GuideSettings {
             screen_x: 0.5,
             screen_y: 0.62,
             screen_size: 260.0,
+            beep: true,
+            beep_volume: 0.25,
         }
     }
 }
@@ -457,6 +463,7 @@ impl RadarSettings {
         for (name, v, def) in [
             ("guide.screenX", &mut g.screen_x, 0.5),
             ("guide.screenY", &mut g.screen_y, 0.62),
+            ("guide.beepVolume", &mut g.beep_volume, 0.25),
         ] {
             if !(v.is_finite() && (0.0..=1.0).contains(v)) {
                 w.push(format!("{name} must be between 0 and 1; using {def}"));
@@ -553,6 +560,21 @@ mod tests {
         assert_eq!(s.rotation_offset_deg, 270.0);
         assert_eq!(s.update_hz, 60);
         assert_eq!(w.len(), 4, "{w:?}"); // rotation is normalised silently
+    }
+
+    #[test]
+    fn guide_settings_are_checked() {
+        let mut s = RadarSettings::default();
+        s.guide.beep_volume = 4.0;
+        s.guide.screen_size = 20.0;
+        let (s, w) = s.sanitized();
+        assert_eq!(s.guide.beep_volume, 0.25);
+        assert_eq!(s.guide.screen_size, 260.0);
+        assert_eq!(w.len(), 2, "{w:?}");
+        // Settings saved before the beep existed get it, quiet.
+        let old: GuideSettings = serde_json::from_str(r#"{"radarArrow":true}"#).unwrap();
+        assert!(old.beep);
+        assert_eq!(old.beep_volume, 0.25);
     }
 
     #[test]

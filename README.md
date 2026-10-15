@@ -71,7 +71,9 @@ the radar.
   radar.
 * **Guide arrows** to the nearest live cube: on a ring around your marker on
   the radar, and around your character in the game view (turning with the
-  camera).
+  camera), saying how far and whether it is **up or down**; a green
+  *CUBE HERE* circle when you are on top of it, and optional soft beeps as
+  you get closer.
 * A **map grid fixed to the world** and your **path over the last minute**,
   so the radar moves like a map as you walk. A dashed circle shows how sure
   an estimated position is.
@@ -249,10 +251,33 @@ touches). What is learned (minimap scale, object distances) is saved to
 ### Guide arrows
 
 Settings → *Cube guide*. On the radar, an arrow on a small ring around your
-marker points at the nearest live cube, with its distance. Over the game, a
-ring around your character does the same, turned with the camera so that
-"up" is where you look. If it sits too high or low, adjust *Character on
-screen* (fractions of the screen).
+marker points at the nearest live cube. Over the game, a ring around your
+character does the same, turned with the camera so that "up" is where you
+look, with a label: how far, and whether the cube is **up or down**
+(▲ 12 m up, ▼ 5 m down, same height). Radar labels show it too (▲12).
+If the ring sits too high or low, adjust *Character on screen* (fractions
+of the screen).
+
+* **Up or down.** The server sends each cube's exact height. Your own height
+  is exact right after the server reports your position (opening your wings,
+  a buff, a loading screen); the minimap only tracks you across the map, so
+  the further you go from that spot, the less sure it is (allowing for
+  ground rising or falling by up to 1 m in 5). The arrow only says up or
+  down when the difference is clearly bigger than that doubt (with "~" when
+  roughly); otherwise, near the cube, it says *up or down? open your wings
+  once*.
+* **Cube here.** Within a few metres (more when your position is less
+  sure) the arrow can no longer point usefully, so it turns into a pulsing
+  green circle: *CUBE HERE*, and *look up* / *look down* / *look around you*.
+* **Beeps** (on by default, quiet): soft beeps from 30 m while you head for
+  the cube, a little faster as you get closer, and a short chime when you
+  arrive. They stop a few seconds after you stop going for it. Own volume
+  slider and a *Test beep* button.
+
+Why not a circle on the cube itself in the game picture? That would need
+the camera's tilt and zoom, which only exist in the game's memory, and this
+app never reads it. A circle guessed from the screen alone would often sit
+in the wrong place.
 
 ### Cube sound
 

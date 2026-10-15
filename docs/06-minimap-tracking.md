@@ -79,6 +79,11 @@ Not yet measured in the live game.
   stretches. When unsure (minimap hidden, track broken, map not moving with
   you), the radar shows the last fix rather than a guess.
 * The calibration is saved in `aion2-learned.json` and reused.
+* **Height**: the minimap is flat, so positions between fixes keep the last
+  fix's height. Its uncertainty is sent along with each position (0.5 m
+  plus 1 m per 5 m moved from the fix, i.e. ground rising or falling by up
+  to about 11°); the guide only says a cube is up or down when the
+  difference is at least twice that (`src/lib/guide.ts`, `heightCue`).
 
 Order of sources: a fresh server fix, then the minimap, then the
 object-range estimate.

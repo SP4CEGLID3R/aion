@@ -2,7 +2,8 @@
 // diagnostics panel polled from the backend.
 
 import { backend } from "./lib/bridge";
-import { alertError, playAlert } from "./lib/sound";
+import { beepPitch } from "./lib/guide";
+import { alertError, playAlert, playArrived, playBeep } from "./lib/sound";
 import { initMinimapSetup, renderMinimapStatus } from "./minimapSetup";
 import type {
   Aion2Status,
@@ -347,6 +348,12 @@ async function main(): Promise<void> {
     await playAlert(sound);
     const err = sound.file ? alertError() : null;
     result.textContent = err ? `${err} — played the built-in chime instead` : sound.file ? "" : "built-in chime";
+  });
+  document.querySelector("#test-beep")!.addEventListener("click", () => {
+    // What walking up to a cube sounds like: three beeps, then "arrived".
+    const volume = read().guide.beepVolume;
+    [30, 18, 8].forEach((d, i) => window.setTimeout(() => playBeep(volume, beepPitch(d)), i * 450));
+    window.setTimeout(() => playArrived(volume), 3 * 450 + 200);
   });
   document.querySelector("#desktop-shortcut")!.addEventListener("click", async () => {
     const result = document.querySelector<HTMLElement>("#desktop-shortcut-result")!;

@@ -30,6 +30,10 @@ export interface GuideSettings {
   screenX: number;
   screenY: number;
   screenSize: number;
+  /** Soft beeps, faster as you get closer to the nearest cube. */
+  beep: boolean;
+  /** 0 – 1; quiet by default. */
+  beepVolume: number;
 }
 
 /** The decoder's view of the minimap (scale, state, camera). */
@@ -109,6 +113,8 @@ export interface PlayerView {
   stale: boolean;
   /** 1-sigma uncertainty in metres when the position is an estimate. */
   accuracyM: number | null;
+  /** 1-sigma uncertainty of the height (metres) when it was not measured with the position; null = measured. */
+  heightAccuracyM: number | null;
 }
 
 export interface CubeView {
@@ -119,6 +125,8 @@ export interface CubeView {
   pos: WorldPos;
   distance: number | null;
   bearingDeg: number | null;
+  /** Height above the player in metres (negative: below); null without a player position. */
+  height: number | null;
   confirmedAgeMs: number;
 }
 
@@ -374,5 +382,5 @@ export const DEFAULT_SETTINGS: RadarSettings = {
   showTrail: true,
   alertSound: { enabled: true, volume: 0.8, file: null },
   minimap: { enabled: true, region: null, fps: 10, background: true },
-  guide: { radarArrow: true, screenArrow: true, screenX: 0.5, screenY: 0.62, screenSize: 260 },
+  guide: { radarArrow: true, screenArrow: true, screenX: 0.5, screenY: 0.62, screenSize: 260, beep: true, beepVolume: 0.25 },
 };

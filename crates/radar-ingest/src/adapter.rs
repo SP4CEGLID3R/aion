@@ -40,12 +40,15 @@ impl EventAdapter {
                 heading,
                 zone,
                 accuracy,
+                height_accuracy,
             } => {
-                let accuracy_m = match accuracy {
-                    Some(a) if !a.is_finite() || a < 0.0 => return Err(AdaptError::NonFinite),
-                    Some(a) => Some(a * self.transform.scale.abs()),
-                    None => None,
+                let metres = |a: Option<f64>| match a {
+                    Some(a) if !a.is_finite() || a < 0.0 => Err(AdaptError::NonFinite),
+                    Some(a) => Ok(Some(a * self.transform.scale.abs())),
+                    None => Ok(None),
                 };
+                let accuracy_m = metres(accuracy)?;
+                let height_accuracy_m = metres(height_accuracy)?;
                 let heading_deg = match heading {
                     Some(h) if !h.is_finite() => return Err(AdaptError::NonFinite),
                     Some(h) => Some(self.transform.apply_heading(h)),
@@ -57,6 +60,7 @@ impl EventAdapter {
                     zone: non_empty(zone),
                     observed_at: t,
                     accuracy_m,
+                    height_accuracy_m,
                 })
             }
             WireEvent::CubeSpawned {
@@ -280,6 +284,7 @@ mod tests {
         let RadarEvent::Player(p) = a
             .convert(WireEvent::Player {
                 accuracy: None,
+                height_accuracy: None,
                 t: 1,
                 pos: [0.0; 3],
                 heading: Some(300.0),
@@ -295,6 +300,7 @@ mod tests {
         assert_eq!(
             a.convert(WireEvent::Player {
                 accuracy: None,
+                height_accuracy: None,
                 t: 1,
                 pos: [f64::NAN, 0.0, 0.0],
                 heading: None,

@@ -157,6 +157,7 @@ impl Simulator {
         let (player, heading) = self.player_at(t);
         out.push(WireEvent::Player {
             accuracy: None,
+            height_accuracy: None,
             t,
             pos: player.map(round1),
             heading: Some(round1(heading)),

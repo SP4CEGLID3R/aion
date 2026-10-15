@@ -53,6 +53,7 @@ fn collect(id: &str, at: Millis) -> RadarEvent {
 fn player(x: f64, y: f64, at: Millis) -> RadarEvent {
     RadarEvent::Player(PlayerUpdate {
         accuracy_m: None,
+        height_accuracy_m: None,
         pos: WorldPos::new(x, y, 0.0),
         heading_deg: Some(0.0),
         zone: None,
@@ -295,6 +296,7 @@ fn future_and_non_finite_events_are_rejected() {
     );
     let bad_player = RadarEvent::Player(PlayerUpdate {
         accuracy_m: None,
+        height_accuracy_m: None,
         pos: WorldPos::new(0.0, f64::INFINITY, 0.0),
         heading_deg: None,
         zone: None,
@@ -346,6 +348,7 @@ fn a_player_in_a_new_zone_implies_a_zone_change() {
     let p = |zone: &str, at| {
         RadarEvent::Player(PlayerUpdate {
             accuracy_m: None,
+            height_accuracy_m: None,
             pos: WorldPos::new(0.0, 0.0, 0.0),
             heading_deg: None,
             zone: Some(zone.into()),
@@ -369,6 +372,38 @@ fn frame_reports_distance_and_bearing_from_the_player() {
     assert!((c.distance.unwrap() - 10.0).abs() < 1e-9);
     assert!(c.bearing_deg.unwrap().abs() < 1e-9);
     assert!(!frame.player.unwrap().stale);
+}
+
+#[test]
+fn frame_reports_how_far_above_or_below_a_cube_is() {
+    let mut t = tracker();
+    t.apply(
+        RadarEvent::Player(PlayerUpdate {
+            accuracy_m: Some(2.0),
+            height_accuracy_m: Some(3.5),
+            pos: WorldPos::new(10.0, 10.0, 4.0),
+            heading_deg: None,
+            zone: None,
+            observed_at: T0,
+        }),
+        T0,
+    );
+    t.apply(
+        RadarEvent::Cube(CubeEvent {
+            pos: Some(WorldPos::new(10.0, 20.0, 16.5)),
+            ..cube(CubeEventKind::Spawned, "high", T0)
+        }),
+        T0,
+    );
+    let frame = t.frame(T0, StaleDisplay::Hide);
+    // 12.5 m up; the distance stays the ground distance.
+    assert!((frame.cubes[0].height.unwrap() - 12.5).abs() < 1e-9);
+    assert!((frame.cubes[0].distance.unwrap() - 10.0).abs() < 1e-9);
+    assert_eq!(frame.player.unwrap().height_accuracy_m, Some(3.5));
+
+    let mut t = tracker();
+    t.apply(spawn("a", T0), T0);
+    assert_eq!(t.frame(T0, StaleDisplay::Hide).cubes[0].height, None);
 }
 
 #[test]

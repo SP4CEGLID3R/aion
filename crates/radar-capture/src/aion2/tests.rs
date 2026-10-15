@@ -489,7 +489,14 @@ fn the_minimap_moves_the_player_between_server_fixes() {
         if i == 2 {
             // One wing opening anchors the track.
             let ev = d.on_frame(&f([0x2a, 0x38], buff_a_body(9180, east(t + 50))), t + 50);
-            assert!(matches!(ev[..], [WireEvent::Player { .. }]));
+            // The server's own report: its height is measured.
+            assert!(matches!(
+                ev[..],
+                [WireEvent::Player {
+                    height_accuracy: None,
+                    ..
+                }]
+            ));
         }
     }
     let st = d.status(7_000);
@@ -501,6 +508,7 @@ fn the_minimap_moves_the_player_between_server_fixes() {
         pos,
         heading,
         accuracy,
+        height_accuracy,
         ..
     } = last
     else {
@@ -513,6 +521,14 @@ fn the_minimap_moves_the_player_between_server_fixes() {
     );
     assert!(accuracy.is_some_and(|a| a < 5.0), "{accuracy:?}");
     assert_eq!(*heading, Some(90.0));
+    // The height is still the fix's: the further from it, the less sure.
+    let fix = d.to_world(east(1_250));
+    let moved = (truth[0] - fix[0]).hypot(truth[1] - fix[1]);
+    assert!(moved > 20.0, "{moved}");
+    assert!(
+        height_accuracy.is_some_and(|h| (h - (0.5 + 0.2 * moved)).abs() < 0.5),
+        "{height_accuracy:?} after {moved} m"
+    );
     // Never back in time.
     let ts: Vec<Millis> = player_events
         .iter()
