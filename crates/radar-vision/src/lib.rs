@@ -16,6 +16,7 @@
 //! implementation.
 
 pub mod capture;
+pub mod locate;
 pub mod ncc;
 pub mod overlay;
 pub mod plane;

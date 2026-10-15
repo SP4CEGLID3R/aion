@@ -297,6 +297,9 @@ mod dev_synth {
                 ring_r: 67.0,
                 dots: vec![(self.w as f64 * 0.3 + 15.0 * s.sin(), self.h as f64 * 0.7)],
                 ui_scale: self.ui,
+                // Not quite centred, like a minimap rectangle that is a few
+                // pixels off on a real screen.
+                pivot: Some((self.w as f64 / 2.0 + 7.0, self.h as f64 / 2.0 - 5.0)),
             };
             *out = frame(&self.map, cx, cy, self.w, self.h, &ov);
         }

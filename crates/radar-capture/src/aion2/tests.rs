@@ -468,6 +468,7 @@ fn minimap_sample(t: Millis, x: f64, y: f64) -> crate::minimap::MinimapSample {
         cone: Some(90.0), // camera looking east on the (north-up) minimap
         cone_strength: 0.7,
         ring_r: None,
+        recentred: false,
         ui_scale: 1.0,
     }
 }

@@ -332,6 +332,12 @@ impl MinimapFusion {
         if let Some(c) = s.cone {
             self.cone = Some((c, s.cone_strength, s.t));
         }
+        if s.recentred {
+            // The next ring measurement is the new reference, not a zoom
+            // change.
+            self.ring_base = None;
+            self.ring_odd = 0;
+        }
         if let Some(r) = s.ring_r {
             self.on_ring(r);
         }
@@ -861,6 +867,7 @@ mod tests {
                 cone: Some(45.0),
                 cone_strength: 0.6,
                 ring_r: None,
+                recentred: false,
                 ui_scale: 1.0,
             }
         }

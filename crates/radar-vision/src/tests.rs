@@ -370,3 +370,97 @@ fn picks_the_track_up_again_after_the_minimap_was_covered() {
         assert!(tr.stats().resumed >= 1);
     }
 }
+
+/// Tracks `seconds` of `path` with the arrow at `pivot` and the pivot
+/// finder on; returns the run, the frame the pivot moved on, and the tracker.
+fn run_off_centre(
+    (w, h, ui, seed): (usize, usize, f64, u64),
+    pivot: (f64, f64),
+    seconds: i64,
+    path: impl Fn(i64) -> (f64, f64),
+) -> (Run, Option<usize>, MinimapTracker) {
+    let map = SynthMap::new(1600, 1300, seed);
+    let cfg = TrackerConfig {
+        ui_scale: ui,
+        locate_pivot: true,
+        ..TrackerConfig::default()
+    };
+    let mut tr = MinimapTracker::new(w, h, cfg);
+    let (mut steps, mut truth, mut moved) = (Vec::new(), Vec::new(), None);
+    let fps = 10;
+    for i in 0..seconds * fps {
+        let t = 1_790_000_000_000 + i * 1000 / fps;
+        let (x, y) = path(i * 1000 / fps);
+        let s = i as f64 / fps as f64;
+        let ov = Overlay {
+            cone: (20.0 + 40.0 * (s / 5.0).sin()).rem_euclid(360.0),
+            facing: (90.0 + 30.0 * (s / 3.0).cos()).rem_euclid(360.0),
+            dots: vec![(60.0 + 25.0 * (s * 0.7).sin(), 50.0 + 12.0 * (s * 0.9).cos())],
+            ui_scale: ui,
+            pivot: Some(pivot),
+            ..Overlay::default()
+        };
+        let px = frame(&map, x, y, w, h, &ov);
+        let st = tr.step(t, &Bgra::packed(w, h, &px).unwrap());
+        if st.recentred {
+            assert!(moved.is_none(), "the pivot moves once");
+            moved = Some(i as usize);
+        }
+        steps.push(st);
+        truth.push((x, y));
+    }
+    let run = Run {
+        steps,
+        truth,
+        ms_per_frame: 0.0,
+    };
+    (run, moved, tr)
+}
+
+#[test]
+fn finds_the_arrow_when_the_rectangle_is_not_centred_on_it() {
+    // The default UI at 1440p and at 1080p, the arrow off by up to ~10 px
+    // (as seen on a player's screen), and an exactly centred one.
+    for (cfg, off) in [
+        ((311, 206, 1.0, 7), (9.0, -6.0)),
+        ((234, 155, 0.75, 3), (-7.0, 5.0)),
+        ((311, 206, 1.0, 5), (0.0, 0.0)),
+    ] {
+        let (w, h) = (cfg.0 as f64, cfg.1 as f64);
+        let pivot = (w / 2.0 + off.0, h / 2.0 + off.1);
+        let (r, moved, tr) = run_off_centre(cfg, pivot, 50, path);
+        let at = moved.unwrap_or_else(|| panic!("{cfg:?}: arrow not found"));
+        let p = tr.pivot();
+        let err = (p.0 - pivot.0).hypot(p.1 - pivot.1);
+        eprintln!(
+            "{cfg:?}: arrow at {pivot:?} found at {p:?} (off {err:.2} px) after {:.1} s",
+            at as f64 / 10.0
+        );
+        assert!(err <= 1.5, "{cfg:?}: found {p:?}, arrow at {pivot:?}");
+        assert!(at <= 300, "{cfg:?}: found only after {at} frames");
+        // Moving the pivot does not disturb the tracking.
+        assert_eq!(
+            r.steps.iter().filter(|s| s.brk).count(),
+            0,
+            "{cfg:?}: breaks"
+        );
+        let (x0, y0) = (r.steps[0].x, r.steps[0].y);
+        let (tx0, ty0) = r.truth[0];
+        let worst = r
+            .steps
+            .iter()
+            .zip(&r.truth)
+            .map(|(s, (tx, ty))| ((s.x - x0) - (tx - tx0)).hypot((s.y - y0) - (ty - ty0)))
+            .fold(0.0, f64::max);
+        assert!(worst < 6.0, "{cfg:?}: worst error {worst:.2} px");
+    }
+}
+
+#[test]
+fn standing_still_never_moves_the_pivot() {
+    let cfg = (311, 206, 1.0, 7);
+    let (_, moved, tr) = run_off_centre(cfg, (164.5, 97.0), 30, |_| (700.0, 600.0));
+    assert_eq!(moved, None);
+    assert!(!tr.pivot_found());
+    assert_eq!(tr.pivot(), (155.5, 103.0));
+}

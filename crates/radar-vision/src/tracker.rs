@@ -18,9 +18,11 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Instant;
 
+use crate::locate::PivotFinder;
 use crate::ncc::{Correlator, Spectra};
 use crate::overlay::{
-    cone_angle, cyan, icon_mask, overlay_mask, ring_radius, CONE_CLEAR, CONE_EDGE_DEG, DISK_R, EDGE,
+    cone_angle, cyan, icon_mask, overlay_mask, ring_radius, CONE_CLEAR, CONE_EDGE_DEG, DISK_R,
+    EDGE, RING_HALF_W,
 };
 use crate::plane::{Bgra, Mask, Plane};
 
@@ -52,6 +54,9 @@ const RING_EVERY: u64 = 50;
 /// a segment worth keeping, and how clear the match must be (stricter than
 /// frame to frame: a wrong pick would put the player somewhere else).
 const RESUME_KEEP: usize = 3;
+/// How far off the arrow a rectangle's centre is expected (px at UI scale
+/// 1) before the arrow is found.
+const PIVOT_SLACK: f64 = 14.0;
 const RESUME_WITHIN_MS: Millis = 120_000;
 const RESUME_TRY_MS: Millis = 10_000;
 const RESUME_HEALTHY: u64 = 10;
@@ -72,6 +77,9 @@ pub struct TrackerConfig {
     pub key_ms: Millis,
     /// Measure the view cone every N frames.
     pub cone_every: u64,
+    /// Find the player arrow in the frames and move the pivot there (the
+    /// rectangle's centre can be a few pixels off it).
+    pub locate_pivot: bool,
 }
 
 impl Default for TrackerConfig {
@@ -82,6 +90,7 @@ impl Default for TrackerConfig {
             downsample: None,
             key_ms: 3_000,
             cone_every: 5,
+            locate_pivot: false,
         }
     }
 }
@@ -111,6 +120,9 @@ pub struct Step {
     pub frozen: bool,
     /// A new range-ring measurement on this frame (rare).
     pub ring_r: Option<f64>,
+    /// The pivot moved to where the arrow really is, on this frame: what
+    /// was measured around the old one (the ring) is to be measured again.
+    pub recentred: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -152,6 +164,7 @@ pub struct MinimapTracker {
     pv: (f64, f64),
     scale: f64,
     cfg: TrackerConfig,
+    finder: Option<PivotFinder>,
     cor: Correlator,
     key_px: f64,
     ring_r: Option<f64>,
@@ -236,6 +249,7 @@ impl MinimapTracker {
             last_print: None,
             same_since: None,
             stats: TrackerStats::default(),
+            finder: cfg.locate_pivot.then(|| PivotFinder::new(w, h, ds, scale)),
             cfg,
         }
     }
@@ -244,8 +258,35 @@ impl MinimapTracker {
         (self.full_w, self.full_h)
     }
 
+    /// Where the player arrow is (full-resolution px).
     pub fn pivot(&self) -> (f64, f64) {
         self.pivot
+    }
+
+    /// The pivot was found in the frames (with `locate_pivot`).
+    pub fn pivot_found(&self) -> bool {
+        self.finder.as_ref().is_some_and(|f| f.found().is_some())
+    }
+
+    /// While the arrow is still being looked for, the rectangle's centre
+    /// can be this far off it (px): the masked disk is that much larger, so
+    /// the fixed arrow disk cannot pin the match to "no movement".
+    fn pivot_slack(&self) -> f64 {
+        match &self.finder {
+            Some(f) if f.found().is_none() => PIVOT_SLACK * self.scale,
+            _ => 0.0,
+        }
+    }
+
+    fn set_pivot(&mut self, p: (f64, f64)) {
+        let ds = self.ds as f64;
+        self.pivot = p;
+        self.pv = ((p.0 - (ds - 1.0) / 2.0) / ds, (p.1 - (ds - 1.0) / 2.0) / ds);
+        // Everything fixed to the arrow is re-measured around it.
+        self.base = None;
+        self.cone_masks.clear();
+        self.cone = None;
+        self.ring_r = None;
     }
 
     pub fn downsample(&self) -> usize {
@@ -270,15 +311,18 @@ impl MinimapTracker {
                 None,
                 ring,
                 true,
-                DISK_R * self.scale / self.ds as f64 + 2.0,
+                (DISK_R * self.scale + self.pivot_slack()) / self.ds as f64 + 2.0,
                 EDGE,
                 CONE_EDGE_DEG,
+                (RING_HALF_W + self.pivot_slack()) / self.ds as f64,
             ));
         }
         self.base.clone().expect("just built")
     }
 
     fn cone_mask(&mut self, cone: f64, wide: bool) -> Mask {
+        // Off-centre, the edge lines are not where the cone says.
+        let wide = wide || self.pivot_slack() > 0.0;
         let key = ((cone / 2.0).round() as i64 % 180, wide);
         if let Some((_, m)) = self.cone_masks.iter().find(|(k, _)| *k == key) {
             return m.clone();
@@ -296,6 +340,7 @@ impl MinimapTracker {
             0.0,
             0,
             CONE_EDGE_DEG * if wide { 3.0 } else { 1.0 },
+            0.0,
         );
         self.cone_masks.push((key, m.clone()));
         m
@@ -389,6 +434,7 @@ impl MinimapTracker {
             black: false,
             frozen: false,
             ring_r: None,
+            recentred: false,
         }
     }
 
@@ -533,6 +579,13 @@ impl MinimapTracker {
         let ds = self.ds as f64;
         let pos = (base.0 .0 - shift.dx * ds, base.0 .1 - shift.dy * ds);
         self.last = Some(pos);
+        let mut recentred = false;
+        if self.n.is_multiple_of(3) {
+            if let Some(p) = self.finder.as_mut().and_then(|f| f.offer(&small, pos)) {
+                self.set_pivot(p);
+                recentred = true;
+            }
+        }
         self.prev = Some(Key {
             spec: spec.clone(),
             pos,
@@ -547,6 +600,7 @@ impl MinimapTracker {
         let mut s = self.step_result(t, Some(pos), true, false, shift.peak);
         s.ring_r = ring_new;
         s.roundness = shift.roundness;
+        s.recentred = recentred;
         s
     }
 }

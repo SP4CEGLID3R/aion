@@ -45,7 +45,9 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
   ctx.arc(view.cx, view.cy, view.radiusPx, 0, Math.PI * 2);
   ctx.fillStyle = withAlpha(c.background, 0.78);
   ctx.fill();
-  if (scene.background && scene.player) drawBackground(ctx, scene, scene.background);
+  // The game's minimap is centred on the player and has its own arrow there.
+  const gameMap = scene.background && scene.player && scene.background.pxPerM > 0 ? scene.background : null;
+  if (gameMap) drawBackground(ctx, scene, gameMap);
   else if (settings.mapGrid && scene.player) drawGrid(ctx, scene);
   if (settings.showTrail) drawTrail(ctx, scene);
 
@@ -63,14 +65,14 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
 
   if (scene.player) {
     drawAccuracy(ctx, scene);
-    drawPlayer(ctx, scene);
+    // A second arrow on top of the game's own would only blur into it.
+    if (!gameMap) drawPlayer(ctx, scene);
   }
 }
 
 /** The game's own minimap behind everything, at the radar's scale. */
 function drawBackground(ctx: CanvasRenderingContext2D, scene: Scene, bg: MinimapBackground): void {
   const { view } = scene;
-  if (!(bg.pxPerM > 0)) return;
   // Radar pixels per minimap pixel.
   const k = view.radiusPx / view.range / bg.pxPerM;
   ctx.save();

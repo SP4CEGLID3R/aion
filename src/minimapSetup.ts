@@ -41,12 +41,27 @@ async function pollPreview(): Promise<void> {
     }
     const ctx = c.getContext("2d")!;
     ctx.putImageData(new ImageData(f.rgba, f.w, f.h), 0, 0);
-    cross(ctx, f.pivotX, f.pivotY, 9);
+    // Where the radar takes you to be: a thin ring around the arrow's disk,
+    // so the game's own arrow stays visible.
+    ring(ctx, f.pivotX, f.pivotY, 0.16 * f.h);
   } catch (e) {
     console.error("minimap preview", e);
   } finally {
     previewBusy = false;
   }
+}
+
+function ring(ctx: CanvasRenderingContext2D, x: number, y: number, r: number): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(0,0,0,0.5)";
+  ctx.stroke();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = "#ff4d6d";
+  ctx.stroke();
+  ctx.restore();
 }
 
 function cross(ctx: CanvasRenderingContext2D, x: number, y: number, r: number): void {

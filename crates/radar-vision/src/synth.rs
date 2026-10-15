@@ -147,6 +147,9 @@ pub struct Overlay {
     pub dots: Vec<(f64, f64)>,
     /// Size of the arrow disk etc. (1.0 = default UI at 1440p).
     pub ui_scale: f64,
+    /// Where the player arrow is in the frame; `None` = the centre (a
+    /// rectangle that is not exactly centred on the arrow has it elsewhere).
+    pub pivot: Option<(f64, f64)>,
 }
 
 impl Default for Overlay {
@@ -157,14 +160,15 @@ impl Default for Overlay {
             ring_r: 67.0,
             dots: Vec::new(),
             ui_scale: 1.0,
+            pivot: None,
         }
     }
 }
 
 /// A `w`×`h` BGRA frame showing the map around (`cx`, `cy`) (texture px),
-/// the player at the frame centre.
+/// the player at `ov.pivot` (default: the frame centre).
 pub fn frame(map: &SynthMap, cx: f64, cy: f64, w: usize, h: usize, ov: &Overlay) -> Vec<u8> {
-    let (px, py) = (w as f64 / 2.0, h as f64 / 2.0);
+    let (px, py) = ov.pivot.unwrap_or((w as f64 / 2.0, h as f64 / 2.0));
     let s = ov.ui_scale;
     let cone_half = crate::overlay::CONE_HALF_DEG;
     let mut out = vec![0u8; w * h * 4];

@@ -48,6 +48,16 @@ NewAge-BD/Soulcrest; checked on their screenshots.
   (fewer re-anchors, less drift) and replaced after a large move or a weaker
   match. A match whose peak is a ridge (one road or coast fills the view) is
   flagged: movement along it cannot be measured.
+* **Finding the arrow**: the rectangle's centre can be a few pixels off the
+  arrow (another screen size, a slightly different HUD). While you move,
+  views taken at different places are compared: around the arrow nothing
+  changes (its light disk stays put), everywhere else the map scrolls. The
+  point whose surroundings vary least is the arrow; once two measurements
+  agree (about 20 s of walking) the pivot moves there and everything fixed
+  to it (masks, view cone, range ring) is measured around it. Until then
+  the masks around the centre are wider. On synthetic minimaps with the
+  arrow 9–10 px off centre: found within 0.5 px; tracking error stayed
+  under 1.5 px (25 px without this).
 * **Camera direction**: the two bright edges of the view cone, about 114°
   apart, found in the angular brightness profile around the arrow.
 * **Black or frozen capture** and **track breaks** are reported, never
@@ -110,7 +120,7 @@ Usually nothing: the minimap's default spot on the primary monitor is used.
 If the HUD was edited, Settings → *Your position* → *Pick the minimap on
 screen…* takes a screenshot (the settings window steps aside) and lets you
 drag a box over the map area. The preview shows exactly what is read, with
-a cross on the pivot.
+a ring around the point taken as you (the pivot).
 
 ## Credits
 

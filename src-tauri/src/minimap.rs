@@ -187,10 +187,10 @@ fn run(
         h,
         TrackerConfig {
             ui_scale,
+            locate_pivot: true,
             ..TrackerConfig::default()
         },
     );
-    let pivot = tracker.pivot();
     let period = Duration::from_millis(1000 / u64::from(fps.max(1)));
     let mut buf = Vec::new();
     let mut seq = 0u64;
@@ -215,6 +215,16 @@ fn run(
             continue;
         };
         let step = tracker.step(t, &frame);
+        let pivot = tracker.pivot();
+        if step.recentred {
+            log::info!(
+                "minimap: player arrow found at ({:.0}, {:.0}), {:+.0}/{:+.0} px from the centre of the rectangle",
+                pivot.0,
+                pivot.1,
+                pivot.0 - w as f64 / 2.0,
+                pivot.1 - h as f64 / 2.0
+            );
+        }
         link.push(MinimapSample {
             t,
             x: step.x,
@@ -230,6 +240,7 @@ fn run(
             cone: step.cone,
             cone_strength: step.cone_strength,
             ring_r: step.ring_r,
+            recentred: step.recentred,
             ui_scale,
         });
         let mut rgba = buf.clone();

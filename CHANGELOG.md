@@ -52,6 +52,16 @@ how far it is and whether it is up or down.
 
 ### Fixed
 
+- When the minimap rectangle was a few pixels off the game's arrow (other
+  screen sizes or HUD layouts), tracking could drift and the minimap in the
+  radar sat off-centre. The arrow is now found on the minimap by itself
+  while you move (about 20 s of walking), and everything is measured around
+  it.
+- The radar no longer draws its own player marker over the game's minimap:
+  the minimap's own arrow is you. (Without the minimap picture, the marker
+  is still drawn.) In Settings the point taken as you is a thin ring around
+  the arrow instead of a cross over it.
+
 - A cube that was just collected could stay on the radar for about 10 more
   seconds: its removal could look older than the latest "still there"
   confirmation and was then ignored.

@@ -36,6 +36,9 @@ pub struct MinimapSample {
     pub cone_strength: f64,
     /// A new range-ring radius measurement (px), rarely.
     pub ring_r: Option<f64>,
+    /// The tracker moved its pivot onto the arrow: ring sizes measured
+    /// before are not comparable with later ones.
+    pub recentred: bool,
     /// Size of the minimap UI relative to the default at 2560×1440.
     pub ui_scale: f64,
 }

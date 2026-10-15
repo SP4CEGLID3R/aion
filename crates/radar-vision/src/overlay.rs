@@ -54,6 +54,7 @@ pub fn overlay_mask(
     disk_r: f64,
     edge: usize,
     cone_edge: f64,
+    ring_half: f64,
 ) -> Mask {
     let mut m = Mask::full(w, h);
     for y in 0..h {
@@ -66,7 +67,7 @@ pub fn overlay_mask(
                 ok &= (d - CONE_HALF_DEG).abs() > cone_edge;
             }
             if let Some(rr) = ring_r {
-                ok &= (r - rr).abs() > RING_HALF_W;
+                ok &= (r - rr).abs() > ring_half;
             }
             m.data[y * w + x] = ok;
         }
@@ -271,6 +272,7 @@ mod tests {
             DISK_R,
             EDGE,
             CONE_EDGE_DEG,
+            RING_HALF_W,
         );
         assert!(!m.at(155, 103) && !m.at(155, 103 - 20)); // arrow disk
                                                           // A point on the cone's right edge line (57° from up).
