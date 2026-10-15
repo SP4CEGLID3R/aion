@@ -52,6 +52,10 @@ how far it is and whether it is up or down.
 
 ### Fixed
 
+- With *click-through* on, the radar's settings button could not be
+  clicked and there was no other way back to the settings: **Ctrl+Alt+S**
+  now opens them at any time, also while the game has focus.
+
 - When the minimap rectangle was a few pixels off the game's arrow (other
   screen sizes or HUD layouts), tracking could drift and the minimap in the
   radar sat off-centre. The arrow is now found on the minimap by itself

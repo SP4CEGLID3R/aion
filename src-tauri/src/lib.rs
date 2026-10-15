@@ -740,6 +740,12 @@ fn mark(app: &AppHandle, state: &AppState, kind: &str) -> Result<usize, String> 
     result
 }
 
+/// Ctrl+Alt+S opens the settings: the way back when the radar lets clicks
+/// through. Global, so it works while the game has focus.
+fn settings_shortcut() -> Shortcut {
+    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyS)
+}
+
 /// Ctrl+Alt+V: a cube appeared. Ctrl+Alt+C: a cube was collected. Global, so
 /// they work while the game has focus.
 fn marker_shortcuts() -> [(Shortcut, &'static str); 2] {
@@ -756,6 +762,14 @@ pub fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    if *shortcut == settings_shortcut() {
+                        // The handler runs on the event loop, where windows are
+                        // made (as in setup), so the window can be built here.
+                        if let Err(e) = show_settings_window(app) {
+                            log::warn!("settings window: {e}");
+                        }
                         return;
                     }
                     let Some((_, kind)) =
@@ -820,6 +834,9 @@ pub fn run() {
                 store,
                 paths,
             });
+            if let Err(e) = app.global_shortcut().register(settings_shortcut()) {
+                log::warn!("could not register the settings hotkey (Ctrl+Alt+S): {e}");
+            }
             for (shortcut, kind) in marker_shortcuts() {
                 // Another program may own the key; markers still work from the settings window.
                 if let Err(e) = app.global_shortcut().register(shortcut) {

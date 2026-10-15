@@ -62,7 +62,8 @@ the radar.
 ## Features
 
 * Transparent, borderless, resizable, always-on-top overlay that doesn't
-  steal focus from the game. Optional **click-through**.
+  steal focus from the game. Optional **click-through**; **Ctrl+Alt+S**
+  opens the settings at any time.
 * **Separate-window mode**: a normal framed window that does not stay on top.
 * Player marker with the camera direction (read from the minimap's view
   cone) or the direction you are moving. Cube markers with labels and
