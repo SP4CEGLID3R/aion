@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "aion2-radar"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "radar-capture",
@@ -2538,7 +2538,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "radar-capture"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libloading 0.8.9",
  "log",
@@ -2552,7 +2552,7 @@ dependencies = [
 
 [[package]]
 name = "radar-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2561,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "radar-ingest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "radar-core",
@@ -2572,7 +2572,7 @@ dependencies = [
 
 [[package]]
 name = "radar-vision"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "png 0.17.16",

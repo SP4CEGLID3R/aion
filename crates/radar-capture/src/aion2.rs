@@ -479,6 +479,8 @@ pub struct Aion2Decoder {
     live: BTreeMap<u64, [f32; 3]>,
     map_id: Option<u32>,
     last_heartbeat: Option<Millis>,
+    /// Time of the latest server frame processed (its capture time).
+    last_frame_t: Option<Millis>,
     last_seen_emit: Millis,
     last_spawn: Option<Millis>,
     started: Option<Millis>,
@@ -492,6 +494,8 @@ pub struct Aion2Decoder {
     /// Last emitted own position, its time and where it came from.
     last_pos: Option<([f32; 3], Millis, PosSource)>,
     last_client_t: Option<Millis>,
+    /// The last own position the client reported (exact height), if any.
+    last_client_pos: Option<[f32; 3]>,
     last_estimate_t: Millis,
     minimap: MinimapFusion,
     last_minimap_t: Option<Millis>,
@@ -539,6 +543,7 @@ impl Aion2Decoder {
             live: BTreeMap::new(),
             map_id: None,
             last_heartbeat: None,
+            last_frame_t: None,
             last_seen_emit: 0,
             last_spawn: None,
             started: None,
@@ -559,6 +564,7 @@ impl Aion2Decoder {
             last_t: 0,
             last_pos: None,
             last_client_t: None,
+            last_client_pos: None,
             last_estimate_t: 0,
         })
     }
@@ -603,6 +609,7 @@ impl Aion2Decoder {
         self.minimap.on_new_connection();
         self.last_pos = None;
         self.last_client_t = None;
+        self.last_client_pos = None;
         self.last_minimap_t = None;
         self.last_estimate_t = 0;
         self.last_fix_pos = None;
@@ -736,10 +743,15 @@ impl Aion2Decoder {
             return Vec::new();
         }
         self.last_seen_emit = t;
+        // Present as of the latest traffic processed, not as of the clock now:
+        // a removal received just before this tick (still in the capture
+        // buffer) carries an earlier capture time, and a confirmation stamped
+        // later would make the radar drop that removal as out of order.
+        let at = self.last_frame_t.map_or(t, |f| f.min(t));
         self.live
             .keys()
             .map(|id| WireEvent::CubeSeen {
-                t,
+                t: at,
                 id: Some(WireId::Num(*id)),
                 pos: None,
                 zone: None,
@@ -758,6 +770,9 @@ impl Aion2Decoder {
             .on_client_frame(frame.opcode, &frame.payload, t)
         {
             self.last_client_t = Some(t);
+            self.last_client_pos = Some(p);
+            // A measured height: tells the ground model whether we fly.
+            self.ground.note_height(p);
             self.edge.on_truth(p, t, 60.0, false);
             if self.last_pos.is_none_or(|(_, lt, _)| t >= lt) {
                 self.emit_player(p, t, &mut out, PosSource::Client, None);
@@ -774,6 +789,7 @@ impl Aion2Decoder {
     pub fn on_frame(&mut self, frame: &Frame, t: Millis) -> Vec<WireEvent> {
         self.started.get_or_insert(t);
         self.last_t = self.last_t.max(t);
+        self.last_frame_t = Some(self.last_frame_t.map_or(t, |l| l.max(t)));
         let op = frame.opcode;
         let body = &frame.payload[2..];
         let mut out = Vec::new();
@@ -1089,7 +1105,7 @@ impl Aion2Decoder {
             })
         });
         self.last_pos = Some((p, t, src));
-        let (p, height_accuracy) = self.own_height(p, src);
+        let (p, height_accuracy) = self.own_height(p, t, src);
         let k = 1.0 / self.cfg.units_per_meter;
         out.push(WireEvent::Player {
             t,
@@ -1105,21 +1121,33 @@ impl Aion2Decoder {
     /// and client reports carry it; between fixes it is the last fix's,
     /// less sure the further we have gone, or the ground model's (from what
     /// stands around us) when that is surer.
-    fn own_height(&self, p: [f32; 3], src: PosSource) -> ([f32; 3], Option<f64>) {
+    fn own_height(&self, p: [f32; 3], t: Millis, src: PosSource) -> ([f32; 3], Option<f64>) {
         if matches!(src, PosSource::Server | PosSource::Client) {
             return (p, None);
         }
-        let from_fix = match self.last_fix_pos {
-            Some(f) => {
-                let moved = ((p[0] - f[0]) as f64).hypot((p[1] - f[1]) as f64);
-                HEIGHT_FIX_ERR + HEIGHT_SLOPE * moved
-            }
-            None => HEIGHT_UNKNOWN,
+        // A measured height and how far we have gone since: less sure the
+        // further, as the ground may rise or fall.
+        let since = |m: [f32; 3]| {
+            let moved = ((p[0] - m[0]) as f64).hypot((p[1] - m[1]) as f64);
+            (m[2], HEIGHT_FIX_ERR + HEIGHT_SLOPE * moved)
         };
-        match self.ground.own_height(p) {
-            Some((z, sigma)) if sigma < from_fix => ([p[0], p[1], z as f32], Some(sigma)),
-            _ => (p, Some(from_fix)),
+        let mut best = match self.last_fix_pos {
+            Some(f) => (p[2], since(f).1),
+            None => (p[2], HEIGHT_UNKNOWN),
+        };
+        // A fresh own client report (when that learner is on) beats the fix.
+        if let Some(c) = self.last_client_pos.filter(|_| self.client_fresh(t)) {
+            let (z, sigma) = since(c);
+            if sigma < best.1 {
+                best = (z, sigma);
+            }
         }
+        if let Some((z, sigma)) = self.ground.own_height(p) {
+            if sigma < best.1 {
+                best = (z as f32, sigma);
+            }
+        }
+        ([p[0], p[1], best.0], Some(best.1))
     }
 
     pub fn status(&self, now: Millis) -> Aion2Status {

@@ -626,3 +626,38 @@ fn between_fixes_the_height_follows_the_ground_around_us() {
     );
     assert_eq!(d.status(t).ground.checks, 2);
 }
+
+#[test]
+fn a_removal_captured_just_before_a_presence_tick_still_removes_the_cube() {
+    use radar_core::{CoordinateTransform, StaleDisplay, Tracker, TrackerConfig};
+    use radar_ingest::EventAdapter;
+    let adapter = EventAdapter::new(CoordinateTransform::default()).unwrap();
+    let mut tracker = Tracker::new(TrackerConfig::default());
+    let mut feed = |evs: Vec<WireEvent>, now: Millis| {
+        for e in evs {
+            tracker.apply(adapter.convert(e).unwrap(), now);
+        }
+    };
+    let mut d = dec();
+    let base: Millis = 1_791_000_000_000;
+    feed(
+        d.on_frame(
+            &f([0x34, 0x36], spawn_body(7, 1_200_039, CUBE, 0)),
+            base + 1_000,
+        ),
+        base + 1_000,
+    );
+    feed(
+        d.on_frame(&f([0x00, 0x36], vec![0; 8]), base + 2_000),
+        base + 2_000,
+    );
+    // The removal was captured at 2 490 but is still in the capture buffer
+    // when the loop's presence tick runs at 2 500 (wall clock).
+    feed(d.tick(base + 2_500), base + 2_500);
+    feed(
+        d.on_frame(&f([0x35, 0x36], removed_body(7, 0x04)), base + 2_490),
+        base + 2_510,
+    );
+    let frame = tracker.frame(base + 2_520, StaleDisplay::Hide);
+    assert!(frame.cubes.is_empty(), "still shown: {:?}", frame.cubes);
+}

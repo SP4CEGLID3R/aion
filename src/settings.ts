@@ -56,11 +56,16 @@ function sixDigit(hex: string): string {
   return `#${h.slice(0, 6)}`;
 }
 
-function fill(s: RadarSettings): void {
+/** Puts settings into the form; `force` also overwrites the field being typed in. */
+function fill(s: RadarSettings, force = false): void {
   current = s;
   for (const el of fields()) {
     // Never overwrite what is being typed right now.
-    if (el === document.activeElement && el instanceof HTMLInputElement && el.type === "text") continue;
+    const typing =
+      el === document.activeElement &&
+      el instanceof HTMLInputElement &&
+      (el.type === "text" || el.type === "number");
+    if (typing && !force) continue;
     const v = getPath(s, el.name);
     if (el instanceof HTMLInputElement && el.type === "checkbox") el.checked = Boolean(v);
     else if (el instanceof HTMLInputElement && el.type === "color") el.value = sixDigit(String(v ?? "#000000"));
@@ -322,12 +327,34 @@ async function fillDevices(): Promise<void> {
   }
 }
 
+// Changes apply by themselves, a moment after the last one, one apply at a
+// time so the newest state is always sent last. A reply never overwrites
+// what was changed after it was sent.
+let applyTimer = 0;
+let applying = false;
+let applyAgain = false;
+let edits = 0;
 let savedTimer = 0;
 
+function scheduleApply(): void {
+  edits++;
+  window.clearTimeout(applyTimer);
+  applyTimer = window.setTimeout(() => {
+    applyTimer = 0;
+    void apply();
+  }, 250);
+}
+
 async function apply(): Promise<void> {
+  if (applying) {
+    applyAgain = true;
+    return;
+  }
+  applying = true;
+  const sent = edits;
   try {
     const res = await backend.updateSettings(read());
-    fill(res.settings);
+    if (edits === sent && applyTimer === 0) fill(res.settings);
     showWarnings(res.warnings);
     const saved = document.querySelector<HTMLElement>("#saved")!;
     saved.textContent = "Saved ✓";
@@ -336,6 +363,12 @@ async function apply(): Promise<void> {
     savedTimer = window.setTimeout(() => saved.classList.remove("show"), 1500);
   } catch (err) {
     showWarnings([`Could not apply settings: ${String(err)}`]);
+  } finally {
+    applying = false;
+    if (applyAgain) {
+      applyAgain = false;
+      void apply();
+    }
   }
 }
 
@@ -346,20 +379,21 @@ async function main(): Promise<void> {
   }
   await fillDevices();
   fill(await backend.getSettings());
-  await backend.onSettings(fill);
+  // Changes from elsewhere; ignored while ours are on their way (the reply
+  // to our own apply fills the form).
+  await backend.onSettings((s) => {
+    if (!applying && applyTimer === 0) fill(s);
+  });
 
   form.querySelector('[name="dataSource.kind"]')!.addEventListener("change", (e) => {
     showSourceSection((e.target as HTMLSelectElement).value);
   });
   // Every change applies by itself (no Apply button to forget).
-  let applyTimer = 0;
-  form.addEventListener("change", () => {
-    window.clearTimeout(applyTimer);
-    applyTimer = window.setTimeout(() => void apply(), 250);
-  });
+  form.addEventListener("change", scheduleApply);
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     window.clearTimeout(applyTimer);
+    applyTimer = 0;
     void apply();
   });
   document.querySelector("#test-sound")!.addEventListener("click", async () => {
@@ -384,8 +418,13 @@ async function main(): Promise<void> {
     }
   });
   document.querySelector("#reset")!.addEventListener("click", async () => {
+    // A pending change must not undo the reset, nor one still on its way.
+    window.clearTimeout(applyTimer);
+    applyTimer = 0;
+    edits++;
+    while (applying) await new Promise((r) => window.setTimeout(r, 50));
     const res = await backend.resetSettings();
-    fill(res.settings);
+    fill(res.settings, true);
     showWarnings(res.warnings);
   });
 

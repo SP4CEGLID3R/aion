@@ -354,6 +354,11 @@ fn picks_the_track_up_again_after_the_minimap_was_covered() {
             if i == 79 {
                 reference = Some((s.seg, s.x, s.y, at(t)));
             }
+            if black && i == 120 {
+                // Straight back on the first frame after black ones.
+                assert_eq!(s.seg, reference.unwrap().0, "first frame back");
+                assert!(s.good);
+            }
             if i >= 122 {
                 let (seg, x0, y0, (tx0, ty0)) = reference.unwrap();
                 assert_eq!(s.seg, seg, "black={black} i={i}: not picked up again");

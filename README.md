@@ -8,14 +8,15 @@ Built with Rust (core logic), Tauri 2 (desktop shell), and TypeScript with
 HTML Canvas (rendering).
 
 <p>
-  <img src="docs/images/radar-synthetic.png" width="280" alt="Radar with the synthetic simulator: live cubes, a rim arrow for a cube beyond range, the SYNTHETIC badge and the legend">
-  <img src="docs/images/radar-telemetry-stale.png" width="280" alt="Radar fed over local telemetry in heading-up mode: one live cube and one cube marked STALE">
+  <img src="docs/images/radar-minimap.png" width="260" alt="The radar: a minimap inside a round frame, the player's arrow in the middle, one hidden cube 52 m away, and the status line '1 cube · position ±14 m'">
+  <img src="docs/images/guide-arrow.png" width="380" alt="The arrow around the character over the game: a dashed ring with an arrow towards the cube and the label '37 m, ▲ 12 m up'">
 </p>
 
-*Left: the built-in simulator. Right: the loopback telemetry demo in
-heading-up mode, with a stale cube shown as hollow. Captured on Linux under
-Xvfb with no compositor, so the transparent area renders black; on Windows it
-is see-through.*
+*Left: the radar following the player on the minimap alone, 50 s after the
+only position report (end-to-end test with a made-up minimap; in game it shows
+the game's own). Right: the arrow drawn around your character over the game.*
+
+What's new: [CHANGELOG.md](CHANGELOG.md).
 
 > [!IMPORTANT]
 > **Live hidden cubes from the game: Verteron and Altgard.**
@@ -124,8 +125,8 @@ pnpm install
 pnpm tauri dev           # run the app (radar + settings window on first start)
 ```
 
-To try local telemetry, set Settings → Data source → *Local telemetry on
-127.0.0.1* (port 47810), apply, then run:
+To try local telemetry, set Settings → *Game* → *Cubes come from* →
+**Another program on this PC** (port 47810), then run:
 
 ```sh
 python tools/telemetry_demo.py
@@ -180,13 +181,13 @@ pnpm tauri build
 
 Output:
 
-* `target\release\bundle\nsis\AION 2 Cube Radar_0.1.0_x64-setup.exe`:
+* `target\release\bundle\nsis\AION 2 Cube Radar_0.2.0_x64-setup.exe`:
   per-user installer, no admin rights needed. It downloads the WebView2
   runtime if it is missing.
-* `target\release\bundle\msi\AION 2 Cube Radar_0.1.0_x64_en-US.msi`
+* `target\release\bundle\msi\AION 2 Cube Radar_0.2.0_x64_en-US.msi`
 
 The NSIS installer's last page has a *Create desktop shortcut* box (ticked by
-default). Settings → *Window* → **Create desktop shortcut** makes one at any
+default). Settings → *Radar* → **Create desktop shortcut** makes one at any
 time.
 
 The capture tool: `cargo build --release -p radar-capture` →
@@ -203,8 +204,10 @@ file is kept as `settings.json.bak` and replaced with defaults.
 ## Packet capture in short
 
 1. Install [Npcap](https://npcap.com) (default options).
-2. Settings → Data source → **Packet capture**, *All adapters*, decoder
-   **AION 2 hidden cubes (built-in)** → Apply.
+2. Settings → *Game* → *Cubes come from*: **The game's network traffic**.
+   Changes apply by themselves. (Adapter and decoder are under *More
+   settings → Game traffic*; the defaults — all adapters, the built-in AION 2
+   decoder — are right.)
 3. Log in and **open your wings once**. The capture panel should show a
    *Game connection*, your zone and your character.
 4. Hidden cubes within about 100 m appear on the radar, with a sound. They
@@ -213,7 +216,9 @@ file is kept as `settings.json.bak` and replaced with defaults.
    between server reports; open your wings once more after moving 10 m or
    so, and the minimap's scale is confirmed (see *Your position* below).
 6. If the radar looks mirrored compared with the minimap, switch *Map north*
-   to +Y.
+   to +Y (*More settings → Game traffic*).
+
+<img src="docs/images/settings.png" width="420" alt="The settings window: Game (cubes come from the game's network traffic), Your position (minimap preview and 'Following you ✓'), Finding cubes (arrow, new-cube sound, soft beeps with their volumes), Radar">
 
 ### Your position
 
@@ -277,22 +282,15 @@ in the wrong place.
 
 ### Cube sound
 
-Settings → *Cube alert*: on/off, volume, and a sound file. The built-in
-sound is a chime made by the app. No sound from any game is included, but
-if you have a sound file you like, such as a loot-filter drop sound, put
-its full path in the field and press *Test sound*.
+Settings → *Finding cubes*: the new-cube sound on/off, its volume and
+*Test*. The built-in sound is a chime made by the app. No sound from any game
+is included, but if you have a sound file you like, such as a loot-filter
+drop sound, put its full path under *More settings → New-cube sound*.
 
 For zones or patches the built-in decoder doesn't know yet, the discovery
 tools are still there: recording, marker hotkeys (**Ctrl+Alt+V** cube
 appeared, **Ctrl+Alt+C** collected) and `radar-capture analyze` / `inspect`.
 See [docs/04-packet-capture.md](docs/04-packet-capture.md).
-
-<img src="docs/images/radar-aion2-demo.png" width="280" alt="The radar fed by live packet capture over a real TCP connection and the built-in AION 2 decoder: a hidden cube about 56 m to the north-west of the player">
-
-*The full chain on a real TCP connection: libpcap capture → game stream
-detection → framing → built-in AION 2 decoder → radar. The traffic is made
-up but uses exactly the documented AION 2 packet layouts; it is not a
-capture of the game.*
 
 ## Connecting another data source
 

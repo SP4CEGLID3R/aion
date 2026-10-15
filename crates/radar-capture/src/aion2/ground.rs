@@ -166,6 +166,15 @@ impl GroundModel {
         }
     }
 
+    /// A measured own height at `p` that is not a server fix (the client's
+    /// own report): it only tells whether we are flying, it does not check
+    /// the model.
+    pub fn note_height(&mut self, p: [f32; 3]) {
+        if let Some(g) = self.fit(p) {
+            self.airborne = p[2] as f64 - g.z - self.bias() > AIRBORNE;
+        }
+    }
+
     /// Our height at `q` if we are on the ground there: the fitted ground
     /// plus the usual offset, with its 1-sigma uncertainty (fit spread and
     /// the misses seen at fixes). `None` while flying or without samples.
@@ -391,6 +400,13 @@ mod tests {
         m.on_fix([0.0, 0.0, 1_000.0 + 20.0]);
         assert!(!m.status().airborne);
         assert!(m.own_height([0.0, 0.0, 0.0]).is_some());
+        // The client's own reports say when we fly, without counting as checks.
+        let checks = m.status().checks;
+        m.note_height([0.0, 0.0, 1_000.0 + 2_500.0]);
+        assert!(m.status().airborne);
+        m.note_height([0.0, 0.0, 1_000.0 + 20.0]);
+        assert!(!m.status().airborne);
+        assert_eq!(m.status().checks, checks);
         m.clear();
         assert_eq!(m.status(), GroundStatus::default());
     }

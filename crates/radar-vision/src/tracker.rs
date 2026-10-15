@@ -335,10 +335,13 @@ impl MinimapTracker {
     /// The view shows a place a recent segment saw: continue that segment.
     fn resume(&mut self, spec: &Rc<Spectra>, t: Millis) -> Option<Step> {
         self.lost.retain(|l| t - l.key.t <= RESUME_WITHIN_MS);
-        let current = self.seg;
+        // The segment that just broke was already tried as the fallback;
+        // after a black frame (no keyframe left) it was not, so it may be
+        // picked up straight away.
+        let skip = self.key.is_some().then_some(self.seg);
         let found = self.lost.iter().enumerate().find_map(|(i, l)| {
-            if l.seg == current {
-                return None; // just broke off: it was tried as the fallback
+            if Some(l.seg) == skip {
+                return None;
             }
             let s = self.cor.shift(&l.key.spec, spec);
             (s.good() && s.peak >= RESUME_PEAK && s.margin >= RESUME_MARGIN).then_some((i, s))
