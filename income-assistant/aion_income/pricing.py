@@ -39,6 +39,12 @@ class ItemStats:
     pessimistic: float | None = None  # what you get if the market dips (25th percentile)
     volatility: float | None = None   # coefficient of variation of hourly prices
     trend_7d: float | None = None
+    supply_kind: str | None = None    # "Daily"/"Weekly" when a supply request asks for this item
+    supply_hours_left: float | None = None
+    reversion: float = 0.3            # share of a dip that recovers within a day (learned, see calibrate)
+    drift: float = 1.0                # typical day-over-day price change across the market (learned)
+    recent_ref: float | None = None   # median of the last 24 hours
+    trend_short: float | None = None  # last 24 h vs the 2 days before (negative = falling)
     history_points: int = 0
     sales_per_day: float | None = None
     sales_basis: str = "unknown"
@@ -61,19 +67,61 @@ class ItemStats:
         return self.listings > 0 and self.sales_per_day == 0 and self.sales_hours >= 12
 
     @property
+    def falling(self) -> bool:
+        return self.trend_short is not None and self.trend_short < -0.05
+
+    @property
+    def target(self) -> float | None:
+        """Price to aim for when listing later: the usual price, but never above the last
+        24 hours (in a falling market the 3-day median lags behind)."""
+        cands = [x for x in (self.ref, self.recent_ref) if x]
+        return min(cands) if cands else None
+
+    @property
     def sell_price(self) -> float | None:
         """What you can realistically list at and still sell: never above the typical
-        price, and never above the cheapest competing listing."""
-        cands = [x for x in (self.ask, self.ref) if x]
+        price, never above the last day's prices, never above the cheapest competing listing."""
+        cands = [x for x in (self.ask, self.ref, self.recent_ref) if x]
         if not cands:
             return None
         if self.spike:
-            return self.ref
+            return self.target
         return min(cands)
+
+    def _next_day(self, price):
+        """A falling price usually keeps falling for a while: expect one more day of the
+        same drop by the time it sells (never assume a rebound)."""
+        if price is None:
+            return None
+        if self.trend_short is not None and self.trend_short < 0:
+            return price * max(0.5, 1 + self.trend_short)
+        return price
+
+    @property
+    def expected_sell(self) -> float | None:
+        """What a listing made now is expected to sell for: a falling trend continues and the
+        whole market drifts the way it has been drifting (never assumed to rise)."""
+        v = self._next_day(self.sell_price)
+        if v is None:
+            return None
+        if self.supply_kind and (self.supply_hours_left or 0) > 24:
+            return v  # a running supply request holds demand up: no market drift
+        return v * min(1.0, self.drift)
+
+    @property
+    def expected_target(self) -> float | None:
+        """Resale price for something bought below its usual price: only the share of such
+        dips that history shows actually recovers within a day."""
+        t = self._next_day(self.target)
+        if t is None:
+            return None
+        if self.ask and self.ask < t:
+            t = self.ask + self.reversion * (t - self.ask)
+        return t * min(1.0, self.drift)
 
     @property
     def sell_pessimistic(self) -> float | None:
-        s = self.sell_price
+        s = self.expected_sell
         if s is None:
             return None
         if self.pessimistic:
@@ -119,6 +167,58 @@ def _points_ts(points):
     return out
 
 
+def recent_split(series, now: float):
+    """(median of the last 24 h, change vs the 24-72 h before) from [(ts, price)]."""
+    last = [p for t, p in series if now - 24 * 3600 <= t <= now and p]
+    older = [p for t, p in series if now - 72 * 3600 <= t < now - 24 * 3600 and p]
+    recent = statistics.median(last) if len(last) >= 2 else None
+    trend = None
+    if recent and len(older) >= 2:
+        base = statistics.median(older)
+        trend = recent / base - 1 if base else None
+    return recent, trend
+
+
+DEFAULT_REVERSION = 0.3
+MIN_CALIBRATION_SAMPLES = 30
+
+
+def calibrate(series_by_item: dict) -> tuple[float, float, int]:
+    """Learn from price history how markets really behave a day later.
+
+    series_by_item: item -> [(ts, price)] oldest first (cheapest listing over time).
+    Returns (reversion, drift, samples):
+      reversion - when the cheapest listing sat 10%+ below its 3-day median, the median share
+                  of that gap that had closed ~24 h later (0 = dips never recover, 1 = fully)
+      drift     - median day-over-day change of prices across items
+    With too little history it returns cautious defaults.
+    """
+    closes, ratios = [], []
+    for series in series_by_item.values():
+        pts = [(t, p) for t, p in series if p]
+        if len(pts) < 6:
+            continue
+        j = 0
+        for i, (t, p) in enumerate(pts):
+            while j < len(pts) and pts[j][0] < t + 18 * 3600:
+                j += 1
+            if j >= len(pts) or pts[j][0] > t + 30 * 3600:
+                continue
+            nxt = pts[j][1]
+            ratios.append(nxt / p)
+            window = [q for tt, q in pts[: i + 1] if tt >= t - 72 * 3600]
+            if len(window) >= 4:
+                ref = statistics.median(window)
+                if p < 0.9 * ref:
+                    closes.append((nxt - p) / (ref - p))
+    drift = statistics.median(ratios) if len(ratios) >= MIN_CALIBRATION_SAMPLES else 1.0
+    if len(closes) >= MIN_CALIBRATION_SAMPLES:
+        reversion = max(0.0, min(1.0, statistics.median(closes)))
+    else:
+        reversion = DEFAULT_REVERSION
+    return reversion, drift, len(closes)
+
+
 def history_stats(points, now: float | None = None):
     """Typical price, pessimistic price, volatility and 7-day trend from hourly points."""
     now = now or time.time()
@@ -127,6 +227,7 @@ def history_stats(points, now: float | None = None):
         return _num(p.get("close")) or _num(p.get("low")) or _num(p.get("price"))
     recent = [(ts, close(p), p) for ts, p in pts if ts >= now - HISTORY_HOURS * 3600 and close(p)]
     res = {"ref": None, "pessimistic": None, "volatility": None, "trend_7d": None, "n": len(recent)}
+    res["recent"], res["trend_short"] = recent_split([(ts, c) for ts, c, _ in recent], now)
     if len(recent) >= MIN_HISTORY_POINTS:
         closes = [c for _, c, _ in recent]
         res["ref"] = statistics.median(closes)
@@ -216,17 +317,29 @@ def build_stats(row: dict, hourly=None, buckets=None, snapshots=None, depth=None
         h = history_stats(hourly, now)
         st.history_points = h["n"]
         st.trend_7d = h["trend_7d"]
+        st.recent_ref, st.trend_short = h["recent"], h["trend_short"]
         if h["ref"]:
             st.ref, st.ref_basis = h["ref"], "site history (72 h median)"
             st.pessimistic, st.volatility = h["pessimistic"], h["volatility"]
-    if st.ref is None and snapshots:
-        prices = [p for _, p, _ in snapshots if p]
-        if len(prices) >= MIN_HISTORY_POINTS:
-            st.ref, st.ref_basis = statistics.median(prices), "your refresh history"
+    if snapshots:
+        latest = max(t for t, _, _ in snapshots)
+        window = [(t, p) for t, p, _ in snapshots if p and t >= latest - HISTORY_HOURS * 3600]
+        prices = [p for _, p in window]
+        if st.ref is None and len(prices) >= MIN_HISTORY_POINTS:
+            st.ref, st.ref_basis = statistics.median(prices), "your refresh history (72 h median)"
             st.pessimistic = percentile(prices, 0.25)
             mean = statistics.fmean(prices)
             st.volatility = statistics.pstdev(prices) / mean if mean else None
             st.history_points = len(prices)
+        if st.recent_ref is None:
+            st.recent_ref, st.trend_short = recent_split(window, latest)
+        if st.trend_7d is None:
+            week = sorted((t, p) for t, p, _ in snapshots if p and t >= latest - 7 * 86400)
+            if len(week) >= 4 and week[-1][0] - week[0][0] >= 48 * 3600:
+                n = max(1, len(week) // 5)
+                first = statistics.median(p for _, p in week[:n])
+                last = statistics.median(p for _, p in week[-n:])
+                st.trend_7d = last / first - 1 if first else None
     if st.ref is None and st.sold_avg and st.units_sold_28d > 0:
         st.ref, st.ref_basis = st.sold_avg, "market sales average (28 days)"
     if st.sold_avg and st.units_sold_28d > 0 and st.ref:
@@ -258,4 +371,6 @@ def build_stats(row: dict, hourly=None, buckets=None, snapshots=None, depth=None
         st.flags.append("listed but not selling")
     if st.volatility and st.volatility > 0.35:
         st.flags.append("price swings a lot")
+    if st.falling:
+        st.flags.append(f"price falling ({st.trend_short:+.0%} in the last day)")
     return st

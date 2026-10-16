@@ -56,7 +56,7 @@ def test_no_opportunities():
 
 def test_resell_needs_history_and_margin_after_tax():
     st = ItemStats(key="k", name="Odyle", ask=1000, listings=40, ref=1200, ref_basis="t", history_points=48,
-                   sales_per_day=30, sales_hours=24, volatility=0.05, pessimistic=1150)
+                   sales_per_day=30, sales_hours=24, volatility=0.05, pessimistic=1150, reversion=1.0)
     o = resell_opportunity(st, keep=0.88)
     assert o and o.profit_unit == 1200 * 0.88 - 1000
     st.ref = 1100  # 1100*0.88 = 968 < 1000: a loss after tax
@@ -67,9 +67,50 @@ def test_resell_needs_history_and_margin_after_tax():
 
 def test_volatile_or_unknown_speed_is_risky():
     st = ItemStats(key="k", name="X", ask=1000, listings=40, ref=1500, ref_basis="t", history_points=48,
-                   sales_per_day=None, sales_hours=0, volatility=0.05, pessimistic=1400)
+                   sales_per_day=None, sales_hours=0, volatility=0.05, pessimistic=1400, reversion=1.0)
     assert resell_opportunity(st, 0.88) is None or resell_opportunity(st, 0.88).risk == RISKY
     st.sales_per_day, st.sales_hours, st.volatility = 30, 24, 0.5
     assert resell_opportunity(st, 0.88).risk == RISKY
     st.volatility = 0.05
+    assert resell_opportunity(st, 0.88).risk != SAFE  # Safe needs proof the price isn't falling
+    st.trend_short = 0.0
     assert resell_opportunity(st, 0.88).risk == SAFE
+
+
+def test_falling_market_resell_targets_recent_price_and_is_risky():
+    st = ItemStats(key="k", name="Ore", ask=1000, listings=40, ref=1600, ref_basis="t", history_points=48,
+                   sales_per_day=30, sales_hours=24, volatility=0.05, pessimistic=1500,
+                   recent_ref=1250, trend_short=-0.06, reversion=1.0)
+    o = resell_opportunity(st, 0.88)
+    assert abs(o.sell_price - 1250 * 0.94) < 1e-6  # last day's price, falling one more day; not the 3-day median
+    assert o.risk == RISKY and any("falling" in r for r in o.reasons)
+    st.trend_short = -0.3                  # steep fall: no profit left at tomorrow's price
+    assert resell_opportunity(st, 0.88) is None
+
+
+def test_dips_count_only_as_far_as_history_says_they_recover():
+    st = ItemStats(key="k", name="Ore", ask=1000, listings=40, ref=1400, ref_basis="t", history_points=48,
+                   sales_per_day=30, sales_hours=24, volatility=0.05, pessimistic=1300, trend_short=0.0)
+    st.reversion = 1.0
+    assert resell_opportunity(st, 0.88).sell_price == 1400
+    st.reversion = 0.5
+    assert resell_opportunity(st, 0.88).sell_price == 1200
+    st.reversion = 0.0                     # dips never recovered: nothing to resell
+    assert resell_opportunity(st, 0.88) is None
+
+
+def test_plan_respects_ten_listing_slots_and_play_time():
+    ops = [op(f"i{i}", 10_000, 3_000, 30) for i in range(40)]
+    p = make_plan(ops, 1e9, 3, play_hours=8)
+    assert len(p.lines) <= 10
+    assert p.minutes <= 8 * 60
+    short_day = make_plan(ops, 1e9, 3, play_hours=1)
+    assert short_day.minutes <= 60 and short_day.profit < p.profit
+
+
+def test_lots_and_listing_time():
+    o = op("odyle", 1000, 200, per_day=60)   # stackable: 60/day -> lots of 10, 6 listings/day
+    assert o.lot == 10 and abs(o.listings_per_day - 6) < 1e-9
+    assert abs(o.minutes_per_day - 30) < 1e-9
+    o.stats.section = "weapons"               # gear: one item per listing
+    assert o.lot == 1 and o.listings_per_day == 60

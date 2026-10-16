@@ -104,3 +104,29 @@ def test_depth_price_prefers_whole_stacks():
 def test_missing_fields_do_not_crash():
     st = build_stats({"item_key": 5})
     assert st.ask is None and st.sell_price is None and not st.trusted
+
+
+def test_recent_price_and_falling_trend_from_snapshots():
+    snaps = [(NOW - (60 - h) * 3600, 2000 if h < 36 else 1000, 20) for h in range(0, 60, 4)]
+    st = build_stats(row(1000), snapshots=snaps, now=NOW)
+    assert st.recent_ref == 1000 and st.trend_short < -0.4 and st.falling
+    assert st.target == 1000 and st.sell_price == 1000
+    assert any("falling" in f for f in st.flags)
+
+
+def test_calibrate_learns_dips_and_drift():
+    from aion_income.pricing import calibrate
+    day = 86400
+    falling = {str(i): [(t * 6 * 3600, 1000 * (0.97 ** (t / 4))) for t in range(40)] for i in range(10)}
+    rev, drift, n = calibrate(falling)
+    assert 0.95 < drift < 0.99
+    # dips that fully recover the next day
+    bouncy = {}
+    for i in range(20):
+        pts = []
+        for d in range(8):
+            pts += [(d * day, 1000), (d * day + 6 * 3600, 1000), (d * day + 12 * 3600, 1000), (d * day + 18 * 3600, 700)]
+        bouncy[str(i)] = pts
+    rev2, _, n2 = calibrate(bouncy)
+    assert n2 >= 30 and rev2 > 0.8
+    assert calibrate({})[0] == 0.3  # not enough history: cautious default

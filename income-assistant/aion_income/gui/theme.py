@@ -318,6 +318,12 @@ def _icon_path(name: str, s: float) -> QPainterPath:
         for i, h in enumerate((0.35, 0.6, 0.45, 0.75)):
             x = s * (0.16 + i * 0.19)
             path.addRoundedRect(QRectF(x, s * (0.86 - h), s * 0.12, s * h), s * 0.03, s * 0.03)
+    elif name == "supply":  # crate
+        path.addRoundedRect(QRectF(s * 0.16, s * 0.3, s * 0.68, s * 0.52), s * 0.06, s * 0.06)
+        path.moveTo(s * 0.16, s * 0.48)
+        path.lineTo(s * 0.84, s * 0.48)
+        path.moveTo(s * 0.5, s * 0.3)
+        path.lineTo(s * 0.5, s * 0.16)
     elif name == "settings":  # gear
         cx = cy = s / 2
         teeth = 8

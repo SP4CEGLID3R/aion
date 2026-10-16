@@ -43,7 +43,7 @@ def test_window_end_to_end(app, engine, settings, fake, tmp_path):
     fake.dips = {"610610015": 0.75}
     win = MainWindow(engine, settings, auto_refresh=False)
     win.show()
-    assert win.tabs.count() == 5
+    assert win.tabs.count() == 6
     win.refresh_btn.click()
     wait_refresh(app, win)
     assert "Updated" in win.status.text()
@@ -102,8 +102,28 @@ def test_window_end_to_end(app, engine, settings, fake, tmp_path):
     app.processEvents()
     assert "Cheapest now" in win.market_detail.toHtml()
 
+    # supply requests: add by (partial) name, the item gets extra demand and a note
+    for sp in win.level_spins.values():
+        sp.setValue(60)
+    win.recalculate()
+    before = win.analysis.stats["610610016"].sales_per_day
+    win.supply_item.setText("Radiant Odyle")
+    win.supply_kind.setCurrentText("Weekly")
+    win.supply_add.click()
+    assert [r.name for r in win.settings.supply_requests] == ["Radiant Odyle"]
+    win.recalculate()
+    st = win.analysis.stats["610610016"]
+    assert st.supply_kind == "Weekly" and st.sales_per_day > before
+    assert any("supply request" in f for f in st.flags)
+    win.supply_item.setText("no such item xyz")
+    win.supply_add.click()
+    assert "not found" in win.supply_msg.text()
+    assert win.supply_model.rowCount() == 1
+
     # settings were saved
     assert os.path.exists(engine.settings_path)
+    from aion_income.engine import Settings as S2
+    assert S2.load(engine.settings_path).supply_requests[0].key == "610610016"
 
     out = os.environ.get("AION_SCREENSHOT_DIR")
     if out:
@@ -111,9 +131,9 @@ def test_window_end_to_end(app, engine, settings, fake, tmp_path):
             lv.setValue(60)
         win.recalculate()
         win.resize(1440, 900)
-        for i, name in enumerate(["best", "plan", "craft", "market", "settings"]):
+        for i, name in enumerate(["best", "plan", "craft", "market", "supply", "settings"]):
             win.tabs.setCurrentIndex(i)
-            for view in (win.best_view, win.plan_view, win.craft_view, win.market_view):
+            for view in (win.best_view, win.plan_view, win.craft_view, win.market_view, win.supply_view):
                 if view.model().rowCount():
                     view.selectRow(0)
             app.processEvents()

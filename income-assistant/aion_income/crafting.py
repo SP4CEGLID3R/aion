@@ -260,9 +260,9 @@ class CraftContext:
         p_combo = s * cp * cs if combo_ok else 0.0
         p_plain = s - p_combo
         p_fail = 1 - s
-        plain_v = out.sell_price * r.out_qty * self.keep
+        plain_v = out.expected_sell * r.out_qty * self.keep
         plain_pess = out.sell_pessimistic * r.out_qty * self.keep
-        combo_v = combo_st.sell_price * self.keep if combo_ok else 0.0
+        combo_v = combo_st.expected_sell * self.keep if combo_ok else 0.0
         combo_pess = combo_st.sell_pessimistic * self.keep if combo_ok else 0.0
         ev = p_plain * plain_v + p_combo * combo_v
         ev_pess = p_plain * plain_pess + p_combo * combo_pess

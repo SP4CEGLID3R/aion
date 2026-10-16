@@ -23,6 +23,16 @@ MARKET_SHARE = 0.3      # share of an item's daily sales you can expect to win a
 MIN_MARGIN = 0.03       # ignore resells under 3% net margin
 FAST_DAYS = 1.0         # "fast seller": a day's batch sells within this many days
 
+# In-game market limits (from players): at most 10 listings up at once, and putting
+# one listing up takes about 5 minutes. Buyers take whole listings and prefer small
+# ones, so stackable items are listed in small lots.
+LISTING_SLOTS = 10
+LISTING_MINUTES = 5.0
+CRAFT_SECONDS = 15.0
+LISTINGS_PER_ITEM_DAY = 6   # aim for about this many small lots per item per day
+MAX_LOT = 20
+SINGLE_SECTIONS = {"armor", "weapons", "accessories", "skins"}  # never stacked: one item per listing
+
 
 @dataclass
 class Opportunity:
@@ -42,6 +52,32 @@ class Opportunity:
     good: list = field(default_factory=list)
     craft: CraftResult | None = None
     stats: ItemStats | None = None
+    outputs_per_unit: float = 1.0  # items to sell per unit bought (success x output qty for crafts)
+
+    @property
+    def sold_per_day(self) -> float:
+        return self.your_per_day * self.outputs_per_unit
+
+    @property
+    def lot(self) -> int:
+        """Items per listing: 1 for gear, small lots for stackables."""
+        if self.stats and self.stats.section in SINGLE_SECTIONS:
+            return 1
+        return int(min(MAX_LOT, max(1, math.ceil(self.sold_per_day / LISTINGS_PER_ITEM_DAY))))
+
+    @property
+    def listings_per_day(self) -> float:
+        return self.sold_per_day / self.lot
+
+    @property
+    def minutes_per_day(self) -> float:
+        """Your time per day: putting listings up, plus crafting."""
+        craft = self.your_per_day * CRAFT_SECONDS / 60.0 if self.method == "Craft" else 0.0
+        return self.listings_per_day * LISTING_MINUTES + craft
+
+    @property
+    def profit_per_listing(self) -> float:
+        return self.profit_day / self.listings_per_day if self.listings_per_day > 0 else 0.0
 
     @property
     def roi(self) -> float:
@@ -92,9 +128,20 @@ def _sales_reasons(st: ItemStats, reasons: list, good: list):
         reasons.append(f"sales rate based on only {st.sales_hours:.0f} h of data")
 
 
+def _supply_notes(st: ItemStats, reasons: list, good: list):
+    if not st.supply_kind:
+        return
+    left = st.supply_hours_left or 0
+    if left <= 24:
+        reasons.append(f"its {st.supply_kind.lower()} supply request ends in {left:.0f} h: buyers drop after that")
+    else:
+        good.append(f"needed for a {st.supply_kind.lower()} supply request: extra buyers for {left / 24:.1f} more days")
+
+
 def classify(op: Opportunity, st: ItemStats, extra_risky: list, extra_safe_ok: bool) -> None:
     reasons, good = op.reasons, op.good
     _sales_reasons(st, reasons, good)
+    _supply_notes(st, reasons, good)
     if st.volatility is not None and st.volatility > 0.35:
         reasons.append(f"price swings ±{st.volatility:.0%}")
     if op.profit_pess_unit < 0:
@@ -131,7 +178,8 @@ def craft_opportunity(res: CraftResult, ctx: CraftContext) -> Opportunity | None
     op = Opportunity(
         method="Craft", name=res.name, key=res.recipe.id, cost_unit=res.cost, revenue_unit=res.ev,
         profit_unit=res.profit, profit_pess_unit=res.profit_pessimistic, market_per_day=market,
-        your_per_day=attempts_day, sell_price=st.sell_price, buy_price=None, craft=res, stats=st,
+        your_per_day=attempts_day, sell_price=st.expected_sell, buy_price=None, craft=res, stats=st,
+        outputs_per_unit=outputs_per_attempt,
     )
     risky = []
     if res.profit_plain_only <= 0:
@@ -144,9 +192,11 @@ def craft_opportunity(res: CraftResult, ctx: CraftContext) -> Opportunity | None
             ist = ctx.stats.get(line.key)
             if ist and ist.listings < 3 and line.qty > 1:
                 risky.append(f"ingredient {line.name} has only {ist.listings} listing(s)")
+    if st.falling:
+        risky.append(f"{res.name} price falling: {st.trend_short:+.0%} in the last day")
     for n in res.notes:
         op.reasons.append(n)
-    safe_ok = res.success >= 0.85 and loss10 < 0.1
+    safe_ok = res.success >= 0.85 and loss10 < 0.1 and not (st.trend_7d is not None and st.trend_7d < -0.1)
     classify(op, st, risky, safe_ok)
     return op
 
@@ -156,7 +206,7 @@ def resell_opportunity(st: ItemStats, keep: float) -> Opportunity | None:
         return None
     if st.history_points < MIN_HISTORY_POINTS and not (st.units_sold_28d and st.sold_avg):
         return None  # never guess "usual price" without history
-    target = st.ref
+    target = st.expected_target  # never above the last 24 h, and a falling price keeps falling
     buy = st.ask
     if st.bulk_unit and st.bulk_unit > buy:
         buy_batch = st.bulk_unit
@@ -174,9 +224,12 @@ def resell_opportunity(st: ItemStats, keep: float) -> Opportunity | None:
         buy_price=buy_batch, stats=st,
     )
     risky = []
+    if st.falling:
+        risky.append(f"price falling: {st.trend_short:+.0%} in the last day (the 'dip' may be the new price)")
     if st.trend_7d is not None and st.trend_7d < -0.15:
         risky.append(f"price falling: {st.trend_7d:+.0%} over 7 days (the dip may be the new normal)")
-    classify(op, st, risky, extra_safe_ok=(st.trend_7d is None or st.trend_7d > -0.05))
+    classify(op, st, risky, extra_safe_ok=(st.trend_7d is None or st.trend_7d > -0.05)
+             and st.trend_short is not None and st.trend_short > -0.02)
     return op
 
 

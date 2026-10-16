@@ -5,9 +5,9 @@ import copy
 import html
 import time
 
-from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QSize, QStringListModel, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QCompleter, QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QSpinBox, QSplitter, QStackedWidget,
     QTextBrowser, QVBoxLayout, QWidget,
 )
@@ -18,6 +18,7 @@ from ..opportunities import MARKET_SHARE, RISK_ORDER, speed_text
 from ..planner import holding_tiers, make_plan
 from ..pricing import history_stats
 from ..recipes import PROFESSIONS
+from .. import supply as supply_mod
 from ..store import parse_ts
 from . import theme
 from .theme import RISK_COLORS
@@ -31,6 +32,7 @@ PAGES = [
     ("plan", "My plan", "What to buy with your kinah, and how much is worth holding"),
     ("craft", "Crafting", "Every recipe you can craft, with your success rate and real costs"),
     ("market", "Market", "All Lumiel listings with usual prices, sales speed and history"),
+    ("supply", "Supply requests", "Items your daily and weekly supply requests ask for: extra buyers while they run"),
     ("settings", "Settings", "Your crafting levels and market fees"),
 ]
 
@@ -136,6 +138,7 @@ class MainWindow(QMainWindow):
         self.tabs.addWidget(self._build_plan_tab())
         self.tabs.addWidget(self._build_craft_tab())
         self.tabs.addWidget(self._build_market_tab())
+        self.tabs.addWidget(self._build_supply_tab())
         self.tabs.addWidget(self._build_settings_tab())
         self.tabs.currentChanged.connect(self._page_changed)
         cl.addWidget(self.tabs, 1)
@@ -348,6 +351,10 @@ class MainWindow(QMainWindow):
                    tip=lambda o: "Time for a one-day batch to sell at the suggested price"),
             Column("Buy now", lambda o: o.batch, lambda o: f"{o.batch}", align="right", width=85,
                    tip=lambda o: "Suggested amount: about one day of what you can sell"),
+            Column("Per listing", lambda o: o.profit_per_listing, lambda o: kinah(o.profit_per_listing), align="right",
+                   width=110, color=lambda o: theme.GOLD,
+                   tip=lambda o: f"Profit per listing you put up (lots of {o.lot}). You can only have 10 listings at "
+                                 f"once and each takes ~5 min, so this is what your time is worth on this item."),
             Column("Cost / item", lambda o: o.cost_unit, lambda o: kinah(o.cost_unit), align="right"),
             Column("Sell at", lambda o: o.sell_price, lambda o: kinah(o.sell_price), align="right"),
             Column("Notes", lambda o: len(o.reasons),
@@ -453,7 +460,10 @@ class MainWindow(QMainWindow):
             out.append(
                 f"<p><span class='muted'>Speed:</span> the market buys {mk} ({esc(st.sales_basis)}); as one more "
                 f"seller you can expect ~{MARKET_SHARE:.0%} of that, ~{o.your_per_day:.1f}/day. "
-                f"Listings now: {st.listings}.</p>")
+                f"Listings now: {st.listings}.<br><span class='muted'>Listing:</span> lots of <b>{o.lot}</b> "
+                f"(buyers take whole listings and prefer small ones) · ~{o.listings_per_day:.1f} listings/day · "
+                f"~{o.minutes_per_day:.0f} min/day of your time · <span class='gold'>{kinah(o.profit_per_listing)}</span> "
+                f"per listing</p>")
         if o.good:
             out.append("<p class='green'>✔ " + "<br>✔ ".join(esc(g) for g in o.good) + "</p>")
         if o.reasons:
@@ -514,13 +524,14 @@ class MainWindow(QMainWindow):
             Column("Amount now", lambda l: l.units, lambda l: f"{l.units}" + (" crafts" if l.op.method == "Craft" else ""),
                    align="right"),
             Column("Spend now", lambda l: l.capital, lambda l: kinah(l.capital), align="right"),
+            Column("List as", lambda l: l.op.lot, lambda l: f"lots of {l.op.lot}", align="right", width=90),
             Column("Sell at", lambda l: l.op.sell_price, lambda l: kinah(l.op.sell_price), align="right"),
             Column("Expected profit", lambda l: l.profit, lambda l: kinah(l.profit, True), align="right",
                    color=lambda l: theme.GREEN, bold=True,
                    tip=lambda l: "Over the whole period, re-buying as it sells", width=130),
         ]
         self.plan_model, self.plan_proxy, self.plan_view = make_table(cols)
-        self.plan_view.sortByColumn(7, Qt.DescendingOrder)
+        self.plan_view.sortByColumn(8, Qt.DescendingOrder)
         self.plan_view.selectionModel().selectionChanged.connect(
             lambda: self.plan_detail.setHtml(self.opportunity_html(selected_row(self.plan_view).op)
                                              if selected_row(self.plan_view) else ""))
@@ -579,7 +590,7 @@ class MainWindow(QMainWindow):
         self.plan_risk_label.setText("Risk levels: " + (", ".join(self.settings.risks) or "none ticked")
                                      + " · change them on Best ways to earn")
         ops = self.plan_ops()
-        p = make_plan(ops, self.settings.budget, self.settings.horizon)
+        p = make_plan(ops, self.settings.budget, self.settings.horizon, play_hours=self.settings.play_hours)
         self.current_plan = p
         self.plan_model.set_rows(p.lines)
         if not self.analysis:
@@ -596,13 +607,14 @@ class MainWindow(QMainWindow):
             self.kpi_spend.set(short(p.capital), f"of {short(p.budget)} budget")
             self.kpi_profit.set("+" + short(p.profit), f"over {self.horizon_box.currentText()} · {roi:.0%} return")
             self.kpi_day.set("+" + short(p.profit_per_day), "re-buying as items sell")
-            self.kpi_spare.set(short(p.leftover), "market can't absorb more" if p.leftover > 0.2 * p.budget else "")
+            self.kpi_spare.set(short(p.leftover), f"{len(p.lines)}/10 listing slots · {p.minutes / 60:.1f} of "
+                               f"{self.settings.play_hours:g} h/day busy")
             self.plan_summary.setText(
                 f"Spend {kinah(p.capital)} now → expected profit {kinah(p.profit, True)} over "
                 f"{self.horizon_box.currentText()} (≈ {kinah(p.profit_per_day)}/day). Keep {kinah(p.leftover)} spare"
-                + (" — the market can't absorb more of these items in this time." if p.leftover > 0.2 * p.budget
-                   else "."))
-        tiers = holding_tiers(ops, self.settings.horizon) if ops else []
+                + (" — with 10 listing slots, ~5 min per listing and your playing time, the market can't take more."
+                   if p.leftover > 0.2 * p.budget else "."))
+        tiers = holding_tiers(ops, self.settings.horizon, self.settings.play_hours) if ops else []
         for lab, name in zip(self.tier_labels, ("Low", "Mid", "High")):
             t = next((t for t in tiers if t.label == name), None)
             color = theme.GOLD if name == "Mid" else theme.TEXT
@@ -855,7 +867,148 @@ class MainWindow(QMainWindow):
             + f"<span class='muted'>Cheapest now · {h['n']} hourly points in the last 72 h · "
               f"usual price: {esc(s.ref_basis)}</span></p>")
 
-    # ── page 5: settings ─────────────────────────────────────────────────
+    # ── page 5: supply requests ──────────────────────────────────────────
+
+    def _build_supply_tab(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(12)
+        intro = muted("Supply requests ask players to hand in items: daily ones (Emergency) and weekly ones. While a "
+                      "request runs, more people buy those items, so they sell faster and hold their price; when it "
+                      "ends, those buyers are gone. There is no public list of active requests and the app never reads "
+                      "the game, so add what your request board shows. Items count for a day (daily) or a week "
+                      "(weekly) unless you set the hours left.")
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.supply_item = QLineEdit()
+        self.supply_item.setPlaceholderText("Item name, e.g. Radiant Odyle")
+        self.supply_names = QStringListModel()
+        self.supply_completer = QCompleter(self.supply_names, self)
+        self.supply_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.supply_completer.setFilterMode(Qt.MatchContains)
+        self.supply_item.setCompleter(self.supply_completer)
+        row.addWidget(self.supply_item, 1)
+        row.addWidget(muted("Needed"))
+        self.supply_qty = QSpinBox()
+        self.supply_qty.setRange(1, 9999)
+        self.supply_qty.setFixedWidth(90)
+        row.addWidget(self.supply_qty)
+        self.supply_kind = QComboBox()
+        self.supply_kind.addItems(list(supply_mod.KINDS))
+        self.supply_kind.setCurrentText("Weekly")
+        row.addWidget(self.supply_kind)
+        row.addWidget(muted("Hours left"))
+        self.supply_hours = QSpinBox()
+        self.supply_hours.setRange(0, 24 * 7)
+        self.supply_hours.setSpecialValueText("auto")
+        self.supply_hours.setFixedWidth(90)
+        self.supply_hours.setToolTip("0 = a full day (daily) or a full week (weekly) from now")
+        row.addWidget(self.supply_hours)
+        self.supply_add = QPushButton("Add request")
+        self.supply_add.setObjectName("Primary")
+        self.supply_add.setCursor(Qt.PointingHandCursor)
+        self.supply_add.clicked.connect(self._supply_add)
+        self.supply_item.returnPressed.connect(self._supply_add)
+        row.addWidget(self.supply_add)
+        lay.addLayout(row)
+        self.supply_msg = muted("")
+        lay.addWidget(self.supply_msg)
+        cols = [
+            Column("Type", lambda r: r.kind, color=lambda r: theme.VIOLET if r.kind == "Weekly" else theme.BLUE,
+                   pill=True, width=110),
+            Column("Item", lambda r: r.name.lower(), lambda r: r.name, width=300, bold=True),
+            Column("Needed", lambda r: r.qty, align="right", width=90),
+            Column("Time left", lambda r: r.hours_left(), lambda r: self._left_text(r), align="right", width=110,
+                   color=lambda r: theme.RED if not r.active() else (theme.AMBER if r.hours_left() <= 24 else None)),
+            Column("Cheapest now", lambda r: self._st(r.key, "ask"), lambda r: kinah(self._st(r.key, "ask")),
+                   align="right", width=120),
+            Column("Usual price", lambda r: self._st(r.key, "ref"), lambda r: kinah(self._st(r.key, "ref")),
+                   align="right", width=115, color=lambda r: theme.GOLD),
+            Column("Sold / day", lambda r: self._st(r.key, "sales_per_day"),
+                   lambda r: "?" if self._st(r.key, "sales_per_day") is None else f"{self._st(r.key, 'sales_per_day'):.1f}",
+                   align="right", tip=lambda r: f"Includes about +{supply_mod.DEMAND_BOOST - 1:.0%} extra buyers "
+                                                f"while the request runs"),
+        ]
+        self.supply_model, self.supply_proxy, self.supply_view = make_table(cols)
+        lay.addWidget(self.supply_view, 1)
+        bottom = QHBoxLayout()
+        self.supply_remove = QPushButton("Remove selected")
+        self.supply_remove.clicked.connect(self._supply_remove)
+        bottom.addWidget(self.supply_remove)
+        self.supply_clear = QPushButton("Remove expired")
+        self.supply_clear.clicked.connect(self._supply_clear_expired)
+        bottom.addWidget(self.supply_clear)
+        bottom.addStretch(1)
+        lay.addLayout(bottom)
+        self._supply_refresh_table()
+        return w
+
+    def _st(self, key, attr):
+        st = self.analysis.stats.get(key) if self.analysis else None
+        return getattr(st, attr) if st else None
+
+    @staticmethod
+    def _left_text(r):
+        h = r.hours_left()
+        if h <= 0:
+            return "expired"
+        return f"{h:.0f} h" if h < 48 else f"{h / 24:.1f} days"
+
+    def _item_names(self):
+        names = {}
+        if self.analysis:
+            for k, st in self.analysis.stats.items():
+                names[st.name.lower()] = (k, st.name)
+        return names
+
+    def _supply_add(self):
+        text = self.supply_item.text().strip()
+        if not text:
+            return
+        names = self._item_names()
+        hit = names.get(text.lower())
+        if not hit:
+            matches = [v for n, v in names.items() if text.lower() in n]
+            hit = matches[0] if len(matches) == 1 else None
+        if not hit:
+            self.supply_msg.setText("Item not found on the Lumiel market"
+                                    + ("" if self.analysis else " — press Refresh first") + ". Pick a name from the list.")
+            self.supply_msg.setStyleSheet(f"color:{theme.RED}")
+            return
+        key, name = hit
+        hours = self.supply_hours.value() or None
+        req = supply_mod.new_request(key, name, self.supply_kind.currentText(), self.supply_qty.value(),
+                                     hours_left=hours)
+        self.settings.supply_requests = [r for r in self.settings.supply_requests if r.key != key] + [req]
+        self.supply_msg.setText(f"Added {name}: counted as extra demand for {self._left_text(req)}.")
+        self.supply_msg.setStyleSheet(f"color:{theme.GREEN}")
+        self.supply_item.clear()
+        self._supply_changed()
+
+    def _supply_remove(self):
+        r = selected_row(self.supply_view)
+        if r:
+            self.settings.supply_requests = [x for x in self.settings.supply_requests if x is not r]
+            self._supply_changed()
+
+    def _supply_clear_expired(self):
+        self.settings.supply_requests = [x for x in self.settings.supply_requests if x.active()]
+        self._supply_changed()
+
+    def _supply_changed(self):
+        self._save_settings()
+        self._supply_refresh_table()
+        self.schedule_recalc()
+
+    def _supply_refresh_table(self):
+        self.supply_model.set_rows(self.settings.supply_requests)
+        if self.analysis:
+            self.supply_names.setStringList(sorted({st.name for st in self.analysis.stats.values()}))
+
+    # ── page 6: settings ─────────────────────────────────────────────────
 
     def _build_settings_tab(self):
         w = QWidget()
@@ -887,10 +1040,10 @@ class MainWindow(QMainWindow):
         grid.addWidget(card(lv), 0, 0)
 
         tx = QVBoxLayout()
-        t2 = QLabel("MARKET FEES")
+        t2 = QLabel("MARKET & TIME")
         t2.setObjectName("SectionTitle")
         tx.addWidget(t2)
-        tx.addWidget(muted("Most guides say 10% tax + 2% listing fee; check your in-game market."))
+        tx.addWidget(muted("10% tax + 2% fee per most guides. Max 10 listings at once, ~5 min each."))
         tf = QFormLayout()
         tf.setSpacing(10)
         self.tax_spin = QDoubleSpinBox()
@@ -907,6 +1060,15 @@ class MainWindow(QMainWindow):
         self.fee_spin.valueChanged.connect(self._fees_changed)
         tf.addRow("Sales tax (when it sells)", self.tax_spin)
         tf.addRow("Listing fee (when you list)", self.fee_spin)
+        self.hours_spin = QDoubleSpinBox()
+        self.hours_spin.setRange(0.5, 24)
+        self.hours_spin.setDecimals(1)
+        self.hours_spin.setSuffix(" h")
+        self.hours_spin.setFixedWidth(110)
+        self.hours_spin.setValue(self.settings.play_hours)
+        self.hours_spin.setToolTip("Each listing takes ~5 min and only 10 can be up at once, so your time limits sales")
+        self.hours_spin.valueChanged.connect(self._hours_changed)
+        tf.addRow("Hours you play per day", self.hours_spin)
         tx.addSpacing(6)
         tx.addLayout(tf)
         tx.addStretch(1)
@@ -940,6 +1102,11 @@ class MainWindow(QMainWindow):
         self._save_settings()
         self._update_banner()
         self.schedule_recalc()
+
+    def _hours_changed(self):
+        self.settings.play_hours = self.hours_spin.value()
+        self._save_settings()
+        self._update_plan()
 
     def _fees_changed(self):
         self.settings.tax_pct = self.tax_spin.value()
@@ -1066,6 +1233,7 @@ class MainWindow(QMainWindow):
         self._update_plan()
         self._update_banner()
         self._update_kpis()
+        self._supply_refresh_table()
 
     def closeEvent(self, event):
         if self._thread is not None:

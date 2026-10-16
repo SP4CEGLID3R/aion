@@ -1,4 +1,5 @@
 import json
+import os
 import time
 
 import pytest
@@ -110,9 +111,11 @@ def test_settings_roundtrip_and_bad_file(tmp_path):
     s.levels["alchemy"] = 77
     s.overrides = {"123": 88.5}
     s.budget = 12e6
+    s.play_hours = 5.5
     s.save(str(p))
     t = Settings.load(str(p))
     assert t.levels["alchemy"] == 77 and t.overrides == {"123": 88.5} and t.budget == 12e6
+    assert t.play_hours == 5.5
     p.write_text("{broken")
     assert Settings.load(str(p)).levels["alchemy"] == 0
     p.write_text(json.dumps({"levels": {"alchemy": "x"}, "tax_pct": -5, "risks": ["Bogus", "Safe"]}))
@@ -157,3 +160,19 @@ def test_snapshots_accumulate(engine, settings, fake):
         r["captured_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 600))
     a = engine.refresh(settings)
     assert a.data.snapshot_count == 2
+
+
+def test_simulator_runs_on_the_apps_own_history(engine, settings, fake, tmp_path):
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+    import simulate
+    engine.refresh(settings)
+    for step in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):  # fake a few days of refreshes
+        for r in fake.rows:
+            r["captured_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + step * 6 * 3600))
+        engine.refresh(settings)
+    db = os.path.join(engine.data_dir, "history.db")
+    hist = simulate.load_history(db)
+    assert len(hist["snapshots"]) >= 13
+    res = simulate.main([db, "--days", "3", "--runs", "2", "--start", "5m"])
+    assert len(res) == 6 and all(r["p10"] >= 0 for r in res)

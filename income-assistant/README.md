@@ -10,6 +10,8 @@ to buy, how fast it sells, and how risky it is.
 <p>
   <img src="docs/screenshots/plan.png" width="49%" alt="My plan">
   <img src="docs/screenshots/market.png" width="49%" alt="Market">
+  <img src="docs/screenshots/supply.png" width="49%" alt="Supply requests">
+  <img src="docs/screenshots/craft.png" width="49%" alt="Crafting">
 </p>
 
 *Screenshots use test data from another Asmodian server, not live Lumiel prices.*
@@ -50,6 +52,48 @@ memory or its network traffic.
 
 Refresh a few times a day. Every refresh is saved, so the app builds its own
 price and sales history, and its estimates get better over time.
+
+## Supply requests
+
+Daily (Emergency) and weekly supply requests make players buy the items they ask
+for. There's no public feed of which requests are up, and the app never reads the
+game, so add them on the **Supply requests** page (item, amount, daily/weekly,
+optional hours left). While a request runs, the app counts about 30% extra buyers
+for that item (an assumption: there's no data to measure it yet) and doesn't apply
+the market's downward drift to it. It warns you when less than a day is left,
+because those buyers disappear when the request ends.
+
+## Market limits it plans around
+
+* At most **10 listings** can be up at once, and putting one up takes about
+  **5 minutes**, so your playing time (Settings → hours per day) caps how much
+  you can sell. Gear is listed one per listing. Stackables go in small lots,
+  because buyers take whole listings and prefer small ones. The plan uses at most
+  10 items and never more listing time than you have.
+* **It learns from history how prices behave a day later.** Every refresh adds
+  to that history. It measures how much of a dip (cheapest listing 10%+ below its
+  usual price) has recovered 24 hours later, and how prices drift overall. A
+  resale only counts the share of the dip that really recovers, and a falling
+  price is expected to keep falling. Without enough history it assumes only 30%
+  of a dip recovers.
+
+## 50-day simulation
+
+`tools/simulate.py` follows the app's plan every day: real prices replayed from a
+price history, craft success and Splendent combos rolled, buyers arriving at
+random, 10 listing slots, 5 minutes per listing, and leftovers carried over.
+
+![50-day simulation](docs/simulation.png)
+
+The run above starts with 20M and plays 8 h/day at peak. It used real Israphel
+(NA East, Asmodian) prices from 6–16 Oct 2026, a falling launch market, replayed
+for 50 days, with Kaisinel's real sales volumes, because Lumiel publishes none.
+Median result for an all-professions level-60 crafter following the Safe +
+Moderate plan: **≈ +8M in 50 days (≈ 160K/day), 10–90% range 23–33M, 1% of runs
+ended below 20M.** Adding Risky suggestions gives about the same median, but 37%
+of runs ended below 20M. Buying cheap listings to resell made nothing, because on
+that data dips almost never recovered within a day. Once you've refreshed for a
+while, run it on your own Lumiel history.
 
 ## How the numbers are made
 

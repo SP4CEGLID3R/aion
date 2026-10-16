@@ -10,9 +10,10 @@ from dataclasses import dataclass, field
 from .api import ApiError, ExchangeClient
 from .crafting import CraftContext
 from .opportunities import all_opportunities
-from .pricing import build_stats
+from .pricing import build_stats, calibrate
 from .recipes import PROFESSIONS, RecipeBook, load_book
-from .store import HistoryStore
+from .store import HistoryStore, parse_ts
+from . import supply as supply_mod
 
 LUMIEL_FALLBACK = {"server_id": 12104, "name": "Lumiel", "region": "NAE", "faction": "Asmodian"}
 
@@ -35,8 +36,10 @@ class Settings:
     tax_pct: float = 10.0
     fee_pct: float = 2.0
     overrides: dict = field(default_factory=dict)  # recipe id -> your in-game success %
+    supply_requests: list = field(default_factory=list)  # supply.SupplyRequest you typed in
     budget: float = 5_000_000
     horizon: float = 3.0
+    play_hours: float = 8.0
     risks: list = field(default_factory=lambda: ["Safe", "Moderate"])
     server_name: str = "Lumiel"
 
@@ -55,6 +58,8 @@ class Settings:
         for k in ("tax_pct", "fee_pct", "budget", "horizon"):
             if isinstance(raw.get(k), (int, float)) and raw[k] >= 0:
                 setattr(s, k, float(raw[k]))
+        if isinstance(raw.get("play_hours"), (int, float)) and 0.5 <= raw["play_hours"] <= 24:
+            s.play_hours = float(raw["play_hours"])
         if isinstance(raw.get("levels"), dict):
             for p in PROFESSIONS:
                 v = raw["levels"].get(p)
@@ -63,6 +68,7 @@ class Settings:
         if isinstance(raw.get("overrides"), dict):
             s.overrides = {str(k): float(v) for k, v in raw["overrides"].items()
                            if isinstance(v, (int, float)) and 0 < v <= 100}
+        s.supply_requests = supply_mod.from_json(raw.get("supply_requests"))
         if isinstance(raw.get("risks"), list):
             s.risks = [r for r in raw["risks"] if r in ("Safe", "Moderate", "Risky")]
         return s
@@ -71,7 +77,9 @@ class Settings:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"levels": self.levels, "tax_pct": self.tax_pct, "fee_pct": self.fee_pct,
-                       "overrides": self.overrides, "budget": self.budget, "horizon": self.horizon,
+                       "overrides": self.overrides, "budget": self.budget,
+                       "supply_requests": supply_mod.to_json(self.supply_requests), "horizon": self.horizon,
+                       "play_hours": self.play_hours,
                        "risks": self.risks, "server_name": self.server_name}, f, indent=1)
         os.replace(tmp, path)
 
@@ -88,6 +96,7 @@ class MarketData:
     snapshot_count: int = 0
     warnings: list = field(default_factory=list)
     requests: int = 0
+    calibration: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -229,16 +238,35 @@ class Engine:
 
     # ── analysis (no network) ────────────────────────────────────────────
 
+    @staticmethod
+    def calibration(data: MarketData):
+        """How dips and prices really moved a day later, from all the history we hold."""
+        series = {k: [(t, p) for t, p, _ in v] for k, v in data.snapshots.items()}
+        for k, d in data.details.items():
+            pts = []
+            for p in d.get("hourly") or []:
+                t = parse_ts(p.get("ts"))
+                v = p.get("close") or p.get("low")
+                if t and isinstance(v, (int, float)):
+                    pts.append((t, float(v)))
+            if len(pts) > len(series.get(k, [])):
+                series[k] = sorted(pts)
+        return calibrate(series)
+
     def analyse(self, data: MarketData, settings: Settings, book: RecipeBook | None = None) -> Analysis:
         book = book or self.book
+        reversion, drift, samples = self.calibration(data)
+        data.calibration = {"reversion": reversion, "drift": drift, "samples": samples}
         stats = {}
         for row in data.rows:
             key = str(row.get("item_key"))
             d = data.details.get(key, {})
             stats[key] = build_stats(row, hourly=d.get("hourly"), buckets=d.get("buckets"),
                                      snapshots=data.snapshots.get(key), depth=d.get("depth"))
+            stats[key].reversion, stats[key].drift = reversion, drift
             if key in book.items and book.items[key][0]:
                 stats[key].name = stats[key].name or book.items[key][0]
+        supply_mod.apply(stats, settings.supply_requests, data.fetched_at if data.offline else None)
         ctx = CraftContext(book, stats, settings.levels, faction_code(data.server), settings.keep,
                            settings.overrides)
         crafts = ctx.evaluate_all()
