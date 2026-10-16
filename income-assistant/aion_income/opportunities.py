@@ -269,6 +269,8 @@ def craft_opportunity(res: CraftResult, ctx: CraftContext) -> Opportunity | None
         risky.append(f"{res.name} price falling: {st.trend_short:+.0%} in the last day")
     if not res.price_ok:
         risky.append(f"only {st.listings} listed and no sales record: the price is a guess")
+    if res.profit_plain_only <= 0 and not res.combo_use_ok:
+        risky.append(f"its profit rests on {res.combo_use_name}, which has no sales record yet: the price is a guess")
     elif st.listings < 3:
         risky.append(f"only {st.listings} listed right now: its price comes from past sales")
     for n in res.notes:

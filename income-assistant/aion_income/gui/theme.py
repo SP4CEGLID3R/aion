@@ -20,6 +20,7 @@ SURFACE_3 = "#232a39"
 BORDER = "#252c3b"
 TEXT = "#e8ebf2"
 MUTED = "#8b93a7"
+TEXT_2 = "#b9c0cf"   # secondary text that still has to be easy to read (detail panels)
 FAINT = "#5d6577"
 GOLD = "#f2b84b"        # kinah
 GOLD_2 = "#d4932a"
@@ -121,6 +122,11 @@ QCheckBox::indicator {{
     width: 16px; height: 16px; border-radius: 5px; border: 1px solid {FAINT}; background: {SURFACE_2};
 }}
 QCheckBox::indicator:checked {{ background: {VIOLET}; border: 1px solid {VIOLET}; image: url(@ASSETS@/check.png); }}
+QTableView::indicator {{
+    width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid {TEXT_2}; background: {SURFACE_2};
+}}
+QTableView::indicator:hover {{ border: 1.5px solid {GOLD}; }}
+QTableView::indicator:checked {{ background: {VIOLET}; border: 1.5px solid {VIOLET}; image: url(@ASSETS@/check.png); }}
 QCheckBox#Chip {{
     background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 15px; padding: 5px 12px 5px 9px;
 }}
@@ -170,9 +176,11 @@ QMessageBox {{ background: {SURFACE}; }}
 
 # HTML in the detail panels (QTextBrowser supports a CSS subset)
 DOC_CSS = f"""
-body {{ color: {TEXT}; font-size: 10pt; }}
+body {{ color: {TEXT}; font-size: 11pt; }}
 h2 {{ color: {TEXT}; font-size: 15pt; font-weight: 600; margin: 0 0 2px 0; }}
-.muted {{ color: {MUTED}; }}
+.muted {{ color: {TEXT_2}; }}
+.warn {{ color: #ffd08a; font-size: 11pt; }}
+.warnhead {{ color: {AMBER}; font-size: 9pt; font-weight: 700; }}
 .gold {{ color: {GOLD}; font-weight: 600; }}
 .green {{ color: {GREEN}; }}
 .red {{ color: {RED}; }}

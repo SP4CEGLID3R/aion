@@ -8,6 +8,10 @@ to buy, how fast it sells, and how risky it is.
 ![Best ways to earn](docs/screenshots/best.png)
 
 <p>
+  <img src="docs/screenshots/shopping.png" width="60%" alt="Shopping list">
+</p>
+
+<p>
   <img src="docs/screenshots/plan.png" width="49%" alt="My plan">
   <img src="docs/screenshots/market.png" width="49%" alt="Market">
   <img src="docs/screenshots/supply.png" width="49%" alt="Supply requests">
@@ -47,7 +51,11 @@ memory or its network traffic.
    important items. Later ones take a few seconds.
 3. **Best ways to earn** lists every opportunity (one row per item, its best
    recipe), sorted by **profit per day**. Few rows usually means few recipes are
-   profitable at today's prices: the Crafting page shows all of them.
+   profitable at today's prices: the Crafting page shows all of them. **Tick the
+   items you want** in the first column and press **Shopping list**: you get
+   every material to buy for them (crafted intermediates, Splendent bases from
+   combo procs and Substance Morph broken down into what you actually buy), with
+   quantities, prices and the total, ready to copy.
    Tick *Safe / Moderate / Risky* to filter, or *Fast sellers only*. Click a
    row for step-by-step instructions: ingredients, where to get each one
    cheapest, what to list at, how many to buy.
@@ -133,16 +141,16 @@ below; it had been understated ~2.5×) and how combo procs are valued:
 
 | | Median | 10–90% of runs | Runs below 30M |
 |---|---|---|---|
-| **EU, shipped default** | **110M (+1.6M/day)** | **94–139M** | **0%** |
-| · Kaisinel (real sales) | 115M (+1.7M/day) | 92–152M | 0% |
-| · Zikel (borrowed volumes) | 109M | 95–126M | 0% |
-| · Kaisinel if you win only half the buyers assumed | 77M (+0.9M/day) | 62–104M | 0% |
-| NA, same shipped default | 133M | 100–212M | 0% |
+| **EU, shipped default** | **118M (+1.8M/day)** | **95–163M** | **0%** |
+| · Kaisinel (real sales) | 129M (+2.0M/day) | 92–190M | 0% |
+| · Zikel (borrowed volumes) | 115M | 98–136M | 0% |
+| · Kaisinel if you win only half the buyers assumed | 81M (+1.0M/day) | 61–114M | 0.1% |
+| NA, same shipped default | 164M | 97–304M | 0% |
 
-**On Lumiel, plan for +45M to +85M on 30M over 50 days** (the half-buyers and the
+**On Lumiel, plan for +50M to +100M on 30M over 50 days** (the half-buyers and the
 full Kaisinel rows). The app assumes you win 30% of an item's buyers as one more
 seller; nobody can measure that yet, so the lower row is the cautious case. From
-15M, a typical first week ended around 25M (about 11M of it cash, the rest stock
+15M, a typical first week ended around 26M (about 9M of it cash, the rest stock
 still listed). The game is new and prices are hard to predict, so refresh often:
 the app keeps re-learning from your own history.
 
@@ -198,6 +206,8 @@ Once you've refreshed for a week or two, run it on your own Lumiel history:
 | What you can sell at | Never above the usual price, never above the cheapest competing listing. |
 | Low stock / not selling | An item with fewer than 3 listings and no sales record, or listed for 12+ hours without selling, is never proof of a profit: crafts that end in one are shown but always Risky ("the price is a guess"). Spiked listings (far above usual) are ignored. |
 | Sales speed | The site's "units sold" counter covers 28 days, but on a market younger than that only the days so far, so the app measures how long the counter has run from its growth between your refreshes (it assumes 28 days until it can tell). Servers without the counter (like Lumiel) count listings that disappear between snapshots and refreshes; on Kaisinel real sales were 1–2× that count for gear and 6–200× for stackables (one listing holds many units), so the count is scaled by the cautious end of that. |
+| Splendent cost from scratch | For every Splendent you can make, the Crafting page shows what one costs to make yourself, starting from raw materials through every tier with its success and combo chances (each ingredient bought or made the cheapest way, normal results sold), next to its market price: green when it sells for more and people really buy it, amber when it's only listed that high. The Market page shows the same "make it yourself" cost for anything craftable. |
+| Splendent bases | Expert's, Artisan's and Dragon Lord recipes need the Splendent version of the tier below. When it can't be bought cheaper, its cost is what it takes to craft the lower tier until a combo procs (failed and normal results included, normal results sold at their low-end price), so those recipes are never skipped. The shopping list breaks it down into the lower-tier crafts and their materials. |
 | Combo procs | A success can proc the Splendent version (recipe combo chance × your combo rate). A Splendent is valued at the better of selling it (only if people buy it) or using it as the base for the next-tier craft (that craft's normal result after its other ingredients, failures and tax). Splendent pieces only count up to what their market, or the next-tier item's, takes per day. Each recipe says whether to sell them or craft with them. |
 | Your share | As one more seller you're assumed to win 30% of an item's daily sales. A suggested batch is about one day of that. |
 | Fast vs. big margin | Ranked by profit per day. In the plan, money from fast sellers is re-spent as it comes back, so a 5% item that sells in hours can beat a 30% item that takes a week. |

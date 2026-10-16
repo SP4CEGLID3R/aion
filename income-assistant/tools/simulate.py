@@ -41,6 +41,7 @@ from aion_income.opportunities import LISTING_MINUTES, LISTING_SLOTS  # noqa: E4
 from aion_income.opportunities import CALIBRATION  # noqa: E402
 from aion_income.planner import MAX_SHARE, OVERHEAD_MINUTES, make_plan  # noqa: E402
 from aion_income.pricing import counter_days  # noqa: E402
+from aion_income.crafting import combo_success  # noqa: E402
 from aion_income.recipes import _load_json, book_from_compact  # noqa: E402
 
 PEAK_TRADE_SHARE = 0.55   # share of a day's trades in the busiest 8 hours
@@ -166,6 +167,11 @@ class Market:
         self._px = {}
         self._ops = {}
 
+    def recipe(self, rid):
+        if not hasattr(self, "_recipes"):
+            self._recipes = {r.id: r for r in self.engine.book.recipes}
+        return self._recipes.get(rid)
+
     def prices(self, i):
         """item -> (sell price, low-end price) for analysis i, computed once."""
         if i not in self._px:
@@ -260,6 +266,28 @@ def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, 
             if op.method == "Craft":
                 c = op.craft
                 craft_minutes += units * 15 / 60
+                for line in c.lines:
+                    if line.source.how != "combo":
+                        continue
+                    # a Splendent base made by crafting the lower tier until a combo procs: its cost
+                    # counted the normal results made on the way as sold; here they go into stock instead
+                    low = mkt.recipe(line.source.via)
+                    s0 = a.ctx.chance(low) if low else None
+                    if not s0:
+                        continue
+                    p0 = s0 * low.combo_chance * combo_success(a.ctx.book, low, int(a.ctx.levels.get(low.profession, 0)), s0)
+                    lst = a.stats.get(low.out)
+                    plain = ((lst.sell_pessimistic or 0) * low.out_qty * keep
+                             if lst and lst.trusted and (lst.sales_per_day or 0) > 0 else 0.0)
+                    tries = units * line.qty / p0
+                    if plain > 0:
+                        credit = tries * (s0 - p0) * plain
+                        cash -= credit
+                        my_trades[tid]["cost"] += credit
+                        add(low.out, tries * (s0 - p0) * low.out_qty, tid)
+                        lot_of.setdefault(low.out, 1)
+                        rate_of[low.out] = lst.sales_per_day or 0.0
+                    craft_minutes += tries * 15 / 60
                 succ = sum(1 for _ in range(units) if rng.random() < c.success)
                 combo = 0
                 if c.combo_key:

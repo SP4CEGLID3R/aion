@@ -124,6 +124,9 @@ class CraftResult:
     combo_use_name: str = ""       # ... that next-tier item
     combo_best: str = ""           # "sell" or "craft"
     combo_use_outlet: tuple = ()   # (next-tier item key, its success, its output qty, Splendents per craft)
+    combo_use_ok: bool = True      # the next-tier item has a trusted price and a sales record
+    combo_cost: float | None = None   # kinah per Splendent made this way from scratch (normal results sold)
+    combo_price: float | None = None  # what that Splendent sells for on the market (before tax)
 
     @property
     def avg_cost_item(self) -> float:
@@ -146,6 +149,7 @@ class CraftContext:
         for r in self.recipes:
             self.by_out.setdefault(r.out, []).append(r)
         self.acq: dict[str, Source] = {}
+        self.made: dict[str, Source] = {}   # cheapest way to make an item yourself, even if buying is cheaper
         self._compute_acquire()
 
     # ── chances ──────────────────────────────────────────────────────────
@@ -252,12 +256,40 @@ class CraftContext:
                     continue
                 s = self.chance(r)
                 per_unit = run[0] / (s * r.out_qty)
+                made = Source(per_unit, "craft", f"craft yourself (lv {r.level}, {s:.0%})", r.id)
                 cur = self.acq.get(r.out)
                 if cur is None or per_unit < cur.cost - 1e-9:
-                    self.acq[r.out] = Source(per_unit, "craft", f"craft yourself (lv {r.level}, {s:.0%})", r.id)
+                    self.acq[r.out] = made
                     changed = True
+                if r.out not in self.made or per_unit < self.made[r.out].cost - 1e-9:
+                    self.made[r.out] = made
+                combo = self.combo_source(r, run[0], s)
+                if combo:
+                    cur = self.acq.get(r.combo)
+                    if cur is None or combo.cost < cur.cost - 1e-9:
+                        self.acq[r.combo] = combo
+                        changed = True
+                    if r.combo not in self.made or combo.cost < self.made[r.combo].cost - 1e-9:
+                        self.made[r.combo] = combo
             if not changed:
                 break
+
+    def combo_source(self, r: Recipe, attempt_cost: float, s: float) -> Source | None:
+        """A Splendent you can't (cheaply) buy can be made by crafting the lower tier until a combo
+        procs. Cost per piece: the attempts it takes, minus what the normal results sell for along
+        the way (at their low-end price, to stay cautious)."""
+        if not r.combo or not r.combo_chance:
+            return None
+        p = s * r.combo_chance * combo_success(self.book, r, int(self.levels.get(r.profession, 0)), s)
+        if p <= 0:
+            return None
+        out = self.stats.get(r.out)
+        plain = 0.0
+        if out and out.trusted and (out.sales_per_day or 0) > 0:
+            plain = (out.sell_pessimistic or 0.0) * r.out_qty * self.keep
+        per_piece = max(0.0, (attempt_cost - (s - p) * plain) / p)
+        return Source(per_piece, "combo", f"craft {self.book.name(r.out)} until a combo procs "
+                                          f"(~1 in {1 / p:.0f} attempts, normal results sold)", r.id)
 
     # ── evaluating one recipe ────────────────────────────────────────────
 
@@ -290,8 +322,8 @@ class CraftContext:
         sell = sell_pess = None
         if combo_st and combo_st.trusted and (combo_st.sales_per_day or 0) > 0 and combo_st.expected_sell:
             sell, sell_pess = combo_st.expected_sell * self.keep, (combo_st.sell_pessimistic or 0) * self.keep
-        use, use_pess, use_name, outlet = ((base_values or {}).get(r.combo, (None, None, "", ())) if r.combo
-                                           else (None, None, "", ()))
+        use, use_pess, use_name, outlet, use_ok = ((base_values or {}).get(r.combo, (None, None, "", (), True))
+                                                   if r.combo else (None, None, "", (), True))
         if use is not None and use <= 0:
             use = use_pess = None
         best = ""
@@ -313,6 +345,7 @@ class CraftContext:
             notes.append("Splendent version has no reliable price or use, counted as a normal item")
         if any(l.source.how == "npc" and "estimated" in l.source.detail for l in lines):
             notes.append("uses an NPC item with an estimated price")
+        csrc = self.combo_source(r, cost, s) if r.combo else None
         return CraftResult(
             recipe=r, name=name, profession=prof,
             success=s, combo_rate=cs, cost=cost, lines=lines, p_fail=p_fail, p_plain=p_plain, p_combo=p_combo,
@@ -321,7 +354,9 @@ class CraftContext:
             out_key=r.out, combo_key=r.combo if combo_ok else None, notes=notes,
             price_ok=out.trusted, combo_name=self._name(r.combo) if r.combo else "",
             combo_sell=sell, combo_use=use, combo_use_name=use_name, combo_best=best,
-            combo_use_outlet=outlet if best == "craft" else (),
+            combo_use_outlet=outlet if best == "craft" else (), combo_use_ok=use_ok or best != "craft",
+            combo_cost=csrc.cost if csrc else None,
+            combo_price=(combo_st.sell_price if combo_st else None),
         )
 
     def _name(self, key: str) -> str:
@@ -340,14 +375,16 @@ class CraftContext:
                 if key not in combos or qty <= 0:
                     continue
                 res = self.evaluate(r, None, free=frozenset({key}))
-                if not res or not res.priced or not res.price_ok:
+                if not res or not res.priced:
                     continue
                 out = self.stats.get(r.out)
                 plain_pess = (out.sell_pessimistic or 0) * r.out_qty * self.keep if out else 0.0
-                v = res.profit_plain_only / qty
                 vp = (res.success * plain_pess - res.cost) / qty
+                # a thin next-tier market (few listings, no sales record) only counts at its low-end price
+                v = res.profit_plain_only / qty if res.price_ok else vp
                 if v > 0 and (key not in values or v > values[key][0]):
-                    values[key] = (v, vp, res.name, (r.out, res.success, r.out_qty, qty))
+                    sold = bool(out and (out.sales_per_day or 0) > 0)
+                    values[key] = (v, vp, res.name, (r.out, res.success, r.out_qty, qty), res.price_ok and sold)
         return values
 
     def evaluate_all(self) -> list[CraftResult]:

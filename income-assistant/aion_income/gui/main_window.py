@@ -332,6 +332,12 @@ class MainWindow(QMainWindow):
         self.fast_box.setCursor(Qt.PointingHandCursor)
         self.fast_box.toggled.connect(self._apply_best_filter)
         filt.addWidget(self.fast_box)
+        self.shop_btn = QPushButton("🛒  Shopping list")
+        self.shop_btn.setToolTip("Tick items in the first column, then get every material you need to buy for them, "
+                                 "with quantities and prices")
+        self.shop_btn.setCursor(Qt.PointingHandCursor)
+        self.shop_btn.clicked.connect(self.open_shopping_list)
+        filt.addWidget(self.shop_btn)
         filt.addStretch(1)
         self.best_search = QLineEdit()
         self.best_search.setPlaceholderText("Search item…")
@@ -342,6 +348,8 @@ class MainWindow(QMainWindow):
         lay.addLayout(filt)
 
         cols = [
+            Column("", lambda o: 0, lambda o: "", check=lambda o: (o.method, o.key), width=40,
+                   tip=lambda o: "Tick to add it to the shopping list"),
             Column("Risk", lambda o: RISK_ORDER[o.risk], lambda o: o.risk, color=lambda o: RISK_COLORS[o.risk],
                    tip=lambda o: "\n".join(o.reasons) or "No warnings", pill=True, width=118),
             Column("Method", lambda o: o.method, color=lambda o: METHOD_COLORS[o.method], pill=True, width=112),
@@ -373,19 +381,36 @@ class MainWindow(QMainWindow):
                    color=lambda o: theme.MUTED),
         ]
         self.best_model, self.best_proxy, self.best_view = make_table(cols)
-        self.best_view.sortByColumn(3, Qt.DescendingOrder)
+        self.best_model.checked_changed.connect(self._update_shop_btn)
+        self.best_view.sortByColumn(4, Qt.DescendingOrder)
         self.best_view.selectionModel().selectionChanged.connect(self._best_selected)
         self.best_detail = browser()
         self.best_detail.setHtml(self._empty_detail("Select a row to see exactly what to do."))
         split = QSplitter(Qt.Vertical)
         split.addWidget(self.best_view)
         split.addWidget(self.best_detail)
-        split.setSizes([430, 260])
+        split.setSizes([330, 400])  # room to read the instructions and warnings
         split.setChildrenCollapsible(False)
         lay.addWidget(split, 1)
         self.best_count = muted("")
         lay.addWidget(self.best_count)
         return w
+
+    def _update_shop_btn(self):
+        n = len(self.best_model.checked_rows())
+        self.shop_btn.setText(f"🛒  Shopping list ({n})" if n else "🛒  Shopping list")
+
+    def open_shopping_list(self):
+        from .shopping_dialog import ShoppingDialog
+        ops = self.best_model.checked_rows()
+        if not self.analysis or not ops:
+            QMessageBox.information(self, "Shopping list", "Tick one or more items in the first column of the "
+                                                           "table, then press Shopping list.")
+            return None
+        dlg = ShoppingDialog(self.analysis.ctx, ops, self)
+        dlg.show()
+        self._shopping = dlg  # keep it alive while open
+        return dlg
 
     def _empty_detail(self, text):
         return f"<p class='muted' style='margin-top:12px'>{esc(text)}</p>"
@@ -456,6 +481,9 @@ class MainWindow(QMainWindow):
                stat_cell("Buy now", str(o.batch)),
                stat_cell("Sell at", kinah(o.sell_price)),
                "</tr></table>"]
+        if o.reasons:
+            out.append(f"<p style='margin-top:8px'><span class='warnhead'>WHY IT'S {o.risk.upper()} — WATCH OUT</span><br>"
+                       + "<br>".join(f"<span class='warn'>⚠ {esc(r)}</span>" for r in o.reasons) + "</p>")
         if o.method == "Craft":
             c = o.craft
             out.append(
@@ -506,8 +534,6 @@ class MainWindow(QMainWindow):
                    f"your kinah (max 15% per item).</p>")
         if o.good:
             out.append("<p class='green'>✔ " + "<br>✔ ".join(esc(g) for g in o.good) + "</p>")
-        if o.reasons:
-            out.append("<p class='red'>⚠ " + "<br>⚠ ".join(esc(r) for r in o.reasons) + "</p>")
         return "".join(out)
 
     # ── page 2: plan ─────────────────────────────────────────────────────
@@ -733,6 +759,21 @@ class MainWindow(QMainWindow):
                    lambda c: kinah(c.profit_pessimistic, True) if c.priced else "—",
                    align="right", color=lambda c: theme.MUTED, width=115),
             Column("Sold / day", lambda c: self._sales(c.out_key), lambda c: self._sales_text(c.out_key), align="right"),
+            Column("Cost / Splendent", lambda c: c.combo_cost, lambda c: kinah(c.combo_cost) if c.combo_cost else "",
+                   align="right", width=130,
+                   tip=lambda c: (f"Average kinah to get one {c.combo_name} by crafting this from scratch (every "
+                                  f"ingredient bought or made the cheapest way, failures included, normal results "
+                                  f"sold)" if c.combo_name else "")),
+            Column("Splendent sells", lambda c: c.combo_price, lambda c: kinah(c.combo_price) if c.combo_price else "",
+                   align="right", width=125,
+                   color=self._splendent_color,
+                   tip=lambda c: "Cheapest listing / usual price of the Splendent on the market. Green: sells for "
+                                 "more than it costs to make (after tax) and people really buy it. Amber: listed "
+                                 "above its cost, but no sales record yet, so that price may only be an asking price."),
+            Column("Splendent (combo)", lambda c: c.combo_value, self._splendent_text, width=230,
+                   color=lambda c: theme.GREEN if c.combo_best == "craft" else (theme.GOLD if c.combo_best else theme.MUTED),
+                   tip=lambda c: (f"Combo procs give {c.combo_name}. Click the recipe for the full advice."
+                                  if c.combo_name else "This recipe has no Splendent version")),
         ]
         self.craft_model, self.craft_proxy, self.craft_view = make_table(cols)
         self.craft_view.sortByColumn(7, Qt.DescendingOrder)
@@ -761,13 +802,29 @@ class MainWindow(QMainWindow):
         split = QSplitter(Qt.Vertical)
         split.addWidget(self.craft_view)
         split.addWidget(bottom)
-        split.setSizes([440, 280])
+        split.setSizes([380, 360])
         split.setChildrenCollapsible(False)
         lay.addWidget(split, 1)
         self.craft_hint = muted("")
         self.craft_hint.setWordWrap(True)
         lay.addWidget(self.craft_hint)
         return w
+
+    def _splendent_color(self, c):
+        if not (c.combo_price and c.combo_cost) or c.combo_price * self.settings.keep <= c.combo_cost:
+            return None
+        st = self.analysis.stats.get(c.recipe.combo) if self.analysis else None
+        return theme.GREEN if st and (st.sales_per_day or 0) > 0 else theme.AMBER
+
+    @staticmethod
+    def _splendent_text(c) -> str:
+        if not c.combo_name:
+            return ""
+        if c.combo_best == "craft":
+            return f"use for {c.combo_use_name} (~{short(c.combo_use)})"
+        if c.combo_best == "sell":
+            return f"sell (~{short(c.combo_sell)} each)"
+        return "keep (no buyers or use yet)"
 
     def _sales(self, key):
         st = self.analysis.stats.get(key) if self.analysis else None
@@ -805,7 +862,9 @@ class MainWindow(QMainWindow):
                            f"{kinah(c.cost)} per attempt (success {c.success:.1%}).</p>")
             elif c.profit > 0:
                 verdict = (f"<p class='amber'>Profitable on paper ({kinah(c.profit, True)} per attempt), but not "
-                           f"a recommended trade: see Best ways to earn with Risky ticked for why.</p>")
+                           f"worth it once the usual gap between predicted and real returns is taken off, or once "
+                           f"Splendent pieces are limited to what their market takes per day, so it isn't listed "
+                           f"in Best ways to earn.</p>")
             else:
                 verdict = (f"<p class='red'>Not profitable right now: cost {kinah(c.cost)} per attempt, "
                            f"expected back {kinah(c.ev)} (success {c.success:.1%}).</p>")
@@ -867,7 +926,7 @@ class MainWindow(QMainWindow):
                    color=lambda s: None if not s.trend_7d else (theme.GREEN if s.trend_7d > 0 else theme.RED)),
             Column("Sold / day", lambda s: s.sales_per_day, lambda s: "?" if s.sales_per_day is None else f"{s.sales_per_day:.1f}",
                    align="right", tip=lambda s: s.sales_basis, width=95),
-            Column("Cheaper via", lambda s: self._source_text(s.key), lambda s: self._source_text(s.key), width=300,
+            Column("Make it yourself", lambda s: self._source_text(s.key), lambda s: self._source_text(s.key), width=340,
                    color=lambda s: theme.GOLD, tip=lambda s: "Cheaper than buying it (e.g. Substance Morph from Odyle)"),
             Column("Notes", lambda s: len(s.flags), lambda s: ", ".join(s.flags), color=lambda s: theme.AMBER),
         ]
@@ -894,11 +953,17 @@ class MainWindow(QMainWindow):
     def _source_text(self, key):
         if not self.analysis:
             return ""
-        src = self.analysis.ctx.cheapest_source(key)
+        ctx = self.analysis.ctx
+        src = ctx.cheapest_source(key)
         st = self.analysis.stats.get(key)
-        if not src or not st or src.how in ("buy", "bulk"):
+        if not st:
             return ""
-        return f"{src.detail}: {kinah(src.cost)}" + (f" (market {kinah(st.ask)})" if st.ask else "")
+        if src and src.how not in ("buy", "bulk"):
+            return f"{src.detail}: {kinah(src.cost)}" + (f" (market {kinah(st.ask)})" if st.ask else "")
+        made = ctx.made.get(key)
+        if made:  # buying is cheaper, but show what making it yourself costs
+            return f"make it yourself: {kinah(made.cost)} ({made.detail})"
+        return ""
 
     def _apply_market_filter(self):
         q = self.market_search.text().strip().lower()

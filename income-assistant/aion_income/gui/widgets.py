@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QRectF, QSortFilterProxyModel, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QRectF, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QFrame, QHeaderView, QLabel, QStyle, QStyledItemDelegate, QTableView, QVBoxLayout, QWidget,
@@ -51,7 +51,7 @@ def parse_kinah(text: str) -> float | None:
 
 class Column:
     def __init__(self, title, value, text=None, tip=None, color=None, align=None, width=None, pill=False,
-                 bold=False):
+                 bold=False, check=None):
         self.title = title
         self.value = value          # row -> sortable value
         self.text = text or (lambda r: "" if value(r) is None else str(value(r)))
@@ -61,13 +61,38 @@ class Column:
         self.width = width
         self.pill = pill            # draw as a coloured pill (risk levels, methods)
         self.bold = bold
+        self.check = check          # row -> key: a tick box in this column (ticks survive refreshes)
 
 
 class RowsModel(QAbstractTableModel):
+    checked_changed = Signal()
+
     def __init__(self, columns, parent=None):
         super().__init__(parent)
         self.columns = columns
         self.rows = []
+        self.checked: set = set()   # keys of ticked rows
+
+    def checked_rows(self) -> list:
+        col = next((c for c in self.columns if c.check), None)
+        return [r for r in self.rows if col and col.check(r) in self.checked]
+
+    def flags(self, index):
+        f = super().flags(index)
+        if index.isValid() and self.columns[index.column()].check:
+            f |= Qt.ItemIsUserCheckable
+        return f
+
+    def setData(self, index, value, role=Qt.EditRole):
+        col = self.columns[index.column()] if index.isValid() else None
+        if role != Qt.CheckStateRole or not col or not col.check:
+            return False
+        key = col.check(self.rows[index.row()])
+        on = value in (Qt.Checked, Qt.Checked.value, 2)
+        (self.checked.add if on else self.checked.discard)(key)
+        self.dataChanged.emit(index, index, [Qt.CheckStateRole])
+        self.checked_changed.emit()
+        return True
 
     def set_rows(self, rows):
         self.beginResetModel()
@@ -94,6 +119,8 @@ class RowsModel(QAbstractTableModel):
             return None
         row = self.rows[index.row()]
         col = self.columns[index.column()]
+        if role == Qt.CheckStateRole and col.check:
+            return Qt.Checked if col.check(row) in self.checked else Qt.Unchecked
         if role == Qt.DisplayRole:
             return col.text(row)
         if role == Qt.UserRole:

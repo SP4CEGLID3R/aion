@@ -67,13 +67,24 @@ def test_window_end_to_end(app, engine, settings, fake, tmp_path):
     assert win.best_proxy.rowCount() == total
 
     # sorting by profit per day, descending by default
-    vals = [win.best_proxy.index(i, 3).data(Qt.UserRole) for i in range(win.best_proxy.rowCount())]
+    vals = [win.best_proxy.index(i, 4).data(Qt.UserRole) for i in range(win.best_proxy.rowCount())]
     assert vals == sorted(vals, reverse=True)
 
     # selecting a row fills the explanation
     win.best_view.selectRow(0)
     app.processEvents()
     assert "What to do" in win.best_detail.toHtml()
+
+    # tick two rows and get the shopping list for them
+    m = win.best_model
+    for row in range(min(2, m.rowCount())):
+        assert m.setData(m.index(row, 0), Qt.Checked, Qt.CheckStateRole)
+    assert len(m.checked_rows()) == min(2, m.rowCount()) and "(" in win.shop_btn.text()
+    dlg = win.open_shopping_list()
+    assert dlg is not None and dlg.current.total > 0 and dlg.mats.rowCount() > 0
+    dlg.spins[0].setValue(dlg.spins[0].value() * 2)
+    assert dlg.current.total > 0
+    dlg.close()
 
     # plan follows the budget
     win.tabs.setCurrentIndex(1)
