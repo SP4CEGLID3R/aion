@@ -153,3 +153,28 @@ def test_million_run_rules():
     small = op("c", 1000, 400, per_day=10)
     assert make_plan([small], 1e9, horizon=7).lines[0].units == 70   # a week of sales at once
     assert make_plan([small], 1e9, horizon=10).lines[0].units == 100  # the default: 10 days of sales
+
+
+def test_stock_length_follows_the_price_trend():
+    from aion_income.planner import make_adaptive_plan, stock_days_for
+    assert stock_days_for(0.01) == 10 and stock_days_for(0.0) == 10 and stock_days_for(-0.004) == 10
+    assert stock_days_for(-0.01) == 5 and stock_days_for(-0.02) == 5
+    assert stock_days_for(-0.03) == 3
+    assert stock_days_for(None) == 5          # unknown trend: the middle choice
+
+    def with_trend(t7):
+        o = op("c", 1000, 400, per_day=10)
+        o.stats.trend_7d = t7
+        return o
+    p, days, trend = make_adaptive_plan([with_trend(0.05)], 1e9, horizon=10)
+    assert days == 10 and p.lines[0].units == 100 and trend > 0
+    p, days, trend = make_adaptive_plan([with_trend(-0.10)], 1e9, horizon=10)   # ~-1.5%/day
+    assert days == 5 and p.lines[0].units == 50
+    p, days, trend = make_adaptive_plan([with_trend(-0.25)], 1e9, horizon=10)   # ~-4%/day
+    assert days == 3 and p.lines[0].units == 30
+    p, days, trend = make_adaptive_plan([op("c", 1000, 400, per_day=10)], 1e9, horizon=10)
+    assert trend is None and days == 5
+    p, days, _ = make_adaptive_plan([op("c", 1000, 400, per_day=10)], 1e9, horizon=10, market_drift=0.97)
+    assert days == 3                          # falls back to the market-wide drift
+    p, days, _ = make_adaptive_plan([with_trend(0.05)], 1e9, horizon=3)
+    assert days == 3                          # never more than "sell within"

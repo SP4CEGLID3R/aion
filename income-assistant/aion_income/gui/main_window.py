@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from ..crafting import batch_loss_probability
 from ..engine import Analysis, Engine, Settings
 from ..opportunities import MARKET_SHARE, RISK_ORDER, speed_text
-from ..planner import holding_tiers, make_plan
+from ..planner import holding_tiers, make_adaptive_plan
 from ..pricing import history_stats
 from ..recipes import PROFESSIONS
 from .. import supply as supply_mod
@@ -607,8 +607,17 @@ class MainWindow(QMainWindow):
         self.plan_risk_label.setText("Risk levels: " + (", ".join(self.settings.risks) or "none ticked")
                                      + " · change them on Best ways to earn")
         ops = self.plan_ops()
-        p = make_plan(ops, self.settings.budget, self.settings.horizon, play_hours=self.settings.play_hours)
-        self.current_plan = p
+        drift = self.analysis.data.calibration.get("drift") if self.analysis else None
+        p, stock_days, trend = make_adaptive_plan(ops, self.settings.budget, self.settings.horizon,
+                                                  self.settings.play_hours, drift)
+        self.current_plan, self.stock_days = p, stock_days
+        if trend is None:
+            stock_note = (f" Buying at most {stock_days:g} days of stock: not enough price history yet to tell "
+                          f"whether prices are rising or falling.")
+        else:
+            why = ("prices are holding" if trend >= -0.005 else "prices are falling, so stored stock would lose value")
+            stock_note = (f" These items moved {trend:+.1%}/day this week: {why}, so buy at most {stock_days:g} "
+                          f"days of stock.")
         self.plan_model.set_rows(p.lines)
         if not self.analysis:
             self.plan_summary.setText("Press Refresh to load the market.")
@@ -630,8 +639,8 @@ class MainWindow(QMainWindow):
                 f"Spend {kinah(p.capital)} now → expected profit {kinah(p.profit, True)} over "
                 f"{self.horizon_box.currentText()} (≈ {kinah(p.profit_per_day)}/day). Keep {kinah(p.leftover)} spare"
                 + (" — with 10 listing slots, ~5 min per listing and your playing time, the market can't take more."
-                   if p.leftover > 0.2 * p.budget else "."))
-        tiers = holding_tiers(ops, self.settings.horizon, self.settings.play_hours) if ops else []
+                   if p.leftover > 0.2 * p.budget else ".") + stock_note)
+        tiers = holding_tiers(ops, self.settings.horizon, self.settings.play_hours, stock_days) if ops else []
         for lab, name in zip(self.tier_labels, ("Low", "Mid", "High")):
             t = next((t for t in tiers if t.label == name), None)
             color = theme.GOLD if name == "Mid" else theme.TEXT

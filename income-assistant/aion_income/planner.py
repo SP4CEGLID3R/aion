@@ -16,8 +16,42 @@ from .opportunities import CALIBRATION, LISTING_SLOTS, Opportunity, realistic_ro
 MAX_SHARE = 0.15     # at most 15% of the budget in one item: 20-25% grew a little faster on average
                      # but had worse bad-luck results on Kaisinel (EU, real sales) and on NA
 MAX_STOCK_DAYS = 10  # buy up to 10 days of sales when a good trade is there: good trades don't show up
-                     # every day but you can sell every day (EU: 2 days -> 52M, 7 -> 78M, 10 -> 81M;
-                     # NA: 7 -> 102M, 10 -> 107M). Not longer: the price history is only ~10 days
+                     # every day but you can sell every day, and the 10 listing slots stay full
+                     # (EU: 2 days -> 52M, 7 -> 78M, 10 -> 81M; NA: 7 -> 102M, 10 -> 107M) ...
+
+# ... but only while prices hold. Stock bought now sells at later prices, so in a falling market
+# long storage loses: in EU runs with prices falling 3%/day, 10 days of stock ended at 37.5M
+# (27% of runs losing money) vs 42.1M with 3 days; at -1.5%/day 5, 7 and 10 days tied (~53M);
+# at 0% or rising, 10 days won. So the stock length follows how the plan's items moved this week.
+STOCK_BY_TREND = ((-0.005, 10.0), (-0.02, 5.0), (float("-inf"), 3.0))  # (daily trend at least, days)
+STOCK_UNKNOWN = 5.0  # no trend known yet: the choice that was never far from best
+
+
+def stock_days_for(trend_per_day: float | None) -> float:
+    """Days of sales to buy at once, given how prices are moving (e.g. -0.01 = falling 1%/day)."""
+    if trend_per_day is None:
+        return STOCK_UNKNOWN
+    return next(days for floor, days in STOCK_BY_TREND if trend_per_day >= floor)
+
+
+def items_trend(ops, market_drift: float | None = None) -> float | None:
+    """Typical daily price move of the items these opportunities sell, weighted by money at stake;
+    falls back to the market-wide day-over-day drift."""
+    pts = []
+    for op in ops:
+        st = op.stats
+        if st is not None and st.trend_7d is not None and st.trend_7d > -0.95:
+            pts.append(((1 + st.trend_7d) ** (1 / 7) - 1, max(op.capital, 1.0)))
+    if pts:
+        pts.sort()
+        half, acc = sum(w for _, w in pts) / 2, 0.0
+        for t, w in pts:
+            acc += w
+            if acc >= half:
+                return t
+    if market_drift is not None and market_drift != 1.0:
+        return market_drift - 1
+    return None
 
 OVERHEAD_MINUTES = 20  # refreshing, walking to the market, buying ingredients
 
@@ -120,6 +154,18 @@ def make_plan(ops: list[Opportunity], budget: float, horizon: float = 3.0, limit
                 sum(l.minutes for l in best), play_hours * 60)
 
 
+def make_adaptive_plan(ops: list[Opportunity], budget: float, horizon: float = 10.0, play_hours: float = 8.0,
+                       market_drift: float | None = None):
+    """make_plan with the stock length set by how the chosen items' prices are moving.
+    Returns (plan, stock days, daily trend or None)."""
+    first = make_plan(ops, budget, horizon, play_hours=play_hours)
+    trend = items_trend([l.op for l in first.lines], market_drift)
+    days = min(max(horizon, 1.0), stock_days_for(trend), MAX_STOCK_DAYS)
+    if days >= min(max(horizon, 1.0), MAX_STOCK_DAYS):
+        return first, days, trend
+    return make_plan(ops, budget, horizon, play_hours=play_hours, batch_days=days), days, trend
+
+
 @dataclass
 class HoldTier:
     label: str
@@ -131,14 +177,15 @@ GRID = [250_000, 500_000, 750_000, 1e6, 1.5e6, 2e6, 3e6, 4e6, 5e6, 7.5e6, 10e6, 
 TIERS = (("Low", 0.5, 5e6), ("Mid", 0.8, 15e6), ("High", 0.95, HOLD_CAP))
 
 
-def holding_tiers(ops: list[Opportunity], horizon: float = 3.0, play_hours: float = 8.0) -> list[HoldTier]:
+def holding_tiers(ops: list[Opportunity], horizon: float = 3.0, play_hours: float = 8.0,
+                  batch_days: float | None = None) -> list[HoldTier]:
     """Low / mid / high amounts worth holding, from where extra kinah stops paying.
 
     Each tier is the smallest amount that earns its share (50% / 80% / 95%) of what
     30 million could earn, but never more than 5M / 15M / 30M: holding more than
     that is unrealistic for most players.
     """
-    curve = [(b, make_plan(ops, b, horizon, play_hours=play_hours).profit_per_day) for b in GRID]
+    curve = [(b, make_plan(ops, b, horizon, play_hours=play_hours, batch_days=batch_days).profit_per_day) for b in GRID]
     best = curve[-1][1]
     if best <= 0:
         return []

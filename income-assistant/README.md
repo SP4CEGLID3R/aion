@@ -108,7 +108,7 @@ random/real-order replay × 347 runs = **999,360 simulated 50-day runs, starting
 
 | Setting | EU | NA | Built in |
 |---|---|---|---|
-| Days of stock bought at once | 2 d → 52M · 3 → 57M · 5 → 62M · 7 → 64M (search average); 10 days beat 7 in a follow-up (78 → 81M typical) | 7 → 102M, 10 → 107M | **up to 10 days** (the price history only covers ~10 days, so no longer) |
+| Days of stock bought at once | 2 d → 52M · 3 → 57M · 5 → 62M · 7 → 64M (search average); 10 days beat 7 in a follow-up (78 → 81M typical) | 7 → 102M, 10 → 107M | **up to 10 days while prices hold, fewer when they fall** (see below) |
 | Minimum predicted return | 10% ≈ 20% > 35%; every top strategy used 20% | 20% best | **+20%**, thinner trades are Risky |
 | Most budget in one item | 25% grew ~3M more on average, but on Kaisinel in real order it lost money in 2% of runs (15%: 0.3%) | 15% clearly better bad-luck results | **15%** |
 | "Loses money if the price falls to its recent low" | made −8% | made −2% | **Risky** |
@@ -136,6 +136,29 @@ Results with 30M after 50 days (shipped default, same dice for every plan):
 servers borrow sales volumes, which may overstate how much sells. The game is new
 and prices are hard to predict, so refresh often: the app keeps re-learning from
 your own history.
+
+**Why buy stock and sell it over days, and when not to.** You can only have 10
+listings up, and each takes ~5 minutes to post, so the listing slots are the
+bottleneck, not your kinah. Holding a few days of stock keeps all 10 slots full
+(on ~93% of days with 5+ days of stock, vs ~50% when buying only a day's worth).
+But stock bought today sells at later prices. The simulator replays real prices,
+which don't capture a long slide, so it was re-run with prices trending on top
+(EU, 30M, 50 days, typical result):
+
+| Prices move | 1 day of stock | 3 days | 5 days | 10 days | App (adaptive) |
+|---|---|---|---|---|---|
+| −3%/day | 38M | **42M** | 42M | 38M (27% of runs lose) | **42M** (11% lose) |
+| −1.5%/day | 42M | 51M | **54M** | 53M | **54M** |
+| flat | 50M | 67M | 75M | **81M** | **81M** |
+| +1%/day | 59M | 85M | 96M | **111M** | **111M** |
+
+So the plan follows how this week's prices of its own items moved: **up to 10 days
+of stock if they hold (better than −0.5%/day), 5 days if they fall 0.5–2%/day,
+3 days if they fall faster, and 5 days until there's enough history to tell.** It
+says which one it picked under the plan. It matched the best fixed choice in every
+case, even with the trend misread by ±0.7%/day. Prices really did move both ways
+in the data: the items the plan trades rose 21% in 10 days on Kaisinel and fell
+28% in 6 days on Zikel.
 
 **Expect paper dips.** About half your net worth sits in stock, valued at its low-end
 price until it sells. Typical runs dip about 22% at some point and still end well up.
