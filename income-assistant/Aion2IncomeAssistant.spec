@@ -16,4 +16,5 @@ exe = EXE(
     name="Aion2IncomeAssistant",
     console=False,
     upx=False,
+    icon="icon.ico",
 )

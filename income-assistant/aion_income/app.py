@@ -9,10 +9,17 @@ def main(argv=None) -> int:
 
     from .engine import Engine
     from .gui.main_window import MainWindow
+    from .gui.theme import apply_theme
 
+    if sys.platform == "win32":
+        try:  # own taskbar icon instead of python's
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("KinahForge.Aion2IncomeAssistant")
+        except Exception:
+            pass
     app = QApplication(sys.argv if argv is None else argv)
-    app.setApplicationName("Aion 2 Income Assistant")
-    app.setStyle("Fusion")
+    app.setApplicationName("Kinah Forge")
+    apply_theme(app)
     win = MainWindow(Engine())
     win.show()
     return app.exec()

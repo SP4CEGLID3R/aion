@@ -5,6 +5,15 @@ A Windows 11 desktop app that reads the **Lumiel** market from
 which recipes to craft, which underpriced listings to buy and resell, how much
 to buy, how fast it sells, and how risky it is.
 
+![Best ways to earn](docs/screenshots/best.png)
+
+<p>
+  <img src="docs/screenshots/plan.png" width="49%" alt="My plan">
+  <img src="docs/screenshots/market.png" width="49%" alt="Market">
+</p>
+
+*Screenshots use test data from another Asmodian server, not live Lumiel prices.*
+
 It only reads a public website. It never touches the game, its files, its
 memory or its network traffic.
 

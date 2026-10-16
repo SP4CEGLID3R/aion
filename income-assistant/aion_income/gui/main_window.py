@@ -1,14 +1,14 @@
-"""Main window: refresh bar on top, five tabs below."""
+"""Main window: sidebar navigation, page header with Refresh, five pages."""
 from __future__ import annotations
 
 import copy
 import html
 import time
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QSpinBox, QSplitter, QTabWidget,
+    QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QSpinBox, QSplitter, QStackedWidget,
     QTextBrowser, QVBoxLayout, QWidget,
 )
 
@@ -19,11 +19,20 @@ from ..planner import holding_tiers, make_plan
 from ..pricing import history_stats
 from ..recipes import PROFESSIONS
 from ..store import parse_ts
-from .widgets import (
-    RISK_COLORS, Column, PriceChart, kinah, make_table, parse_kinah, pct, selected_row, short,
-)
+from . import theme
+from .theme import RISK_COLORS
+from .widgets import Column, KpiCard, PriceChart, kinah, make_table, parse_kinah, pct, selected_row, short
 
 HORIZONS = [("1 day", 1.0), ("3 days", 3.0), ("7 days", 7.0)]
+METHOD_COLORS = {"Craft": theme.BLUE, "Resell": theme.VIOLET}
+
+PAGES = [
+    ("earn", "Best ways to earn", "Every way to make kinah on Lumiel right now, ranked by profit per day"),
+    ("plan", "My plan", "What to buy with your kinah, and how much is worth holding"),
+    ("craft", "Crafting", "Every recipe you can craft, with your success rate and real costs"),
+    ("market", "Market", "All Lumiel listings with usual prices, sales speed and history"),
+    ("settings", "Settings", "Your crafting levels and market fees"),
+]
 
 
 class RefreshWorker(QObject):
@@ -49,8 +58,40 @@ def esc(s) -> str:
     return html.escape(str(s))
 
 
-def risk_badge(risk: str) -> str:
-    return f'<span style="color:{RISK_COLORS.get(risk, "#000")};font-weight:bold">{esc(risk)}</span>'
+def pill_html(text: str, color: str) -> str:
+    return (f"<span style='background-color:{theme.tint(color, 0.16)};color:{color};font-weight:600;font-size:8.5pt'>"
+            f"&nbsp;&nbsp;● {esc(text).upper()}&nbsp;&nbsp;</span>")
+
+
+def stat_cell(label: str, value: str, color: str = theme.TEXT) -> str:
+    return (f"<td style='padding-right:28px'><span style='color:{theme.MUTED};font-size:8pt;font-weight:600'>"
+            f"{esc(label).upper()}</span><br><span style='font-size:15pt;font-weight:600;color:{color}'>"
+            f"{esc(value)}</span></td>")
+
+
+def card(widget_or_layout, margins=(16, 14, 16, 14)) -> QFrame:
+    f = QFrame()
+    f.setObjectName("Card")
+    lay = QVBoxLayout(f)
+    lay.setContentsMargins(*margins)
+    if isinstance(widget_or_layout, QWidget):
+        lay.addWidget(widget_or_layout)
+    else:
+        lay.addLayout(widget_or_layout)
+    return f
+
+
+def browser() -> QTextBrowser:
+    b = QTextBrowser()
+    b.setOpenExternalLinks(True)
+    b.document().setDefaultStyleSheet(theme.DOC_CSS)
+    return b
+
+
+def muted(text: str) -> QLabel:
+    lab = QLabel(text)
+    lab.setObjectName("Muted")
+    return lab
 
 
 class MainWindow(QMainWindow):
@@ -59,28 +100,48 @@ class MainWindow(QMainWindow):
         self.engine = engine
         self.settings = settings or Settings.load(engine.settings_path)
         self.analysis: Analysis | None = None
+        self.current_plan = None
         self._thread = None
         self._worker = None
-        self.setWindowTitle("Aion 2 Income Assistant · Lumiel")
-        self.resize(1280, 800)
+        self.setWindowTitle("Kinah Forge · Aion 2 Income Assistant")
+        self.setWindowIcon(theme.app_icon())
+        self.resize(1360, 860)
+        self.setMinimumSize(1080, 680)
 
-        central = QWidget()
-        root = QVBoxLayout(central)
-        root.addLayout(self._build_top_bar())
+        root = QWidget()
+        root.setObjectName("Root")
+        h = QHBoxLayout(root)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+        h.addWidget(self._build_sidebar())
+
+        content = QWidget()
+        cl = QVBoxLayout(content)
+        cl.setContentsMargins(26, 20, 26, 18)
+        cl.setSpacing(12)
+        cl.addLayout(self._build_header())
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setTextVisible(False)
+        self.progress.hide()
+        cl.addWidget(self.progress)
         self.banner = QLabel()
+        self.banner.setObjectName("Banner")
         self.banner.setWordWrap(True)
-        self.banner.setStyleSheet("background:#fff4d6;color:#5a4500;padding:6px;border-radius:4px")
         self.banner.hide()
-        root.addWidget(self.banner)
+        cl.addWidget(self.banner)
 
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_best_tab(), "Best ways to earn")
-        self.tabs.addTab(self._build_plan_tab(), "My plan")
-        self.tabs.addTab(self._build_craft_tab(), "Crafting")
-        self.tabs.addTab(self._build_market_tab(), "Market")
-        self.tabs.addTab(self._build_settings_tab(), "Settings")
-        root.addWidget(self.tabs, 1)
-        self.setCentralWidget(central)
+        self.tabs = QStackedWidget()
+        self.tabs.addWidget(self._build_best_tab())
+        self.tabs.addWidget(self._build_plan_tab())
+        self.tabs.addWidget(self._build_craft_tab())
+        self.tabs.addWidget(self._build_market_tab())
+        self.tabs.addWidget(self._build_settings_tab())
+        self.tabs.currentChanged.connect(self._page_changed)
+        cl.addWidget(self.tabs, 1)
+        h.addWidget(content, 1)
+        self.setCentralWidget(root)
+        self._page_changed(0)
 
         self._recalc_timer = QTimer(self)
         self._recalc_timer.setSingleShot(True)
@@ -88,36 +149,130 @@ class MainWindow(QMainWindow):
         self._recalc_timer.timeout.connect(self.recalculate)
 
         self._update_banner()
+        self._update_kpis()
         if auto_refresh:
             QTimer.singleShot(200, self.refresh)
 
-    # ── top bar ──────────────────────────────────────────────────────────
+    def showEvent(self, event):
+        super().showEvent(event)
+        theme.dark_title_bar(self)
 
-    def _build_top_bar(self):
+    # ── sidebar and header ───────────────────────────────────────────────
+
+    def _build_sidebar(self):
+        side = QFrame()
+        side.setObjectName("Sidebar")
+        side.setFixedWidth(236)
+        lay = QVBoxLayout(side)
+        lay.setContentsMargins(16, 22, 16, 18)
+        lay.setSpacing(4)
+
+        brand = QHBoxLayout()
+        logo = QLabel()
+        pm = theme.logo_pixmap(84)
+        pm.setDevicePixelRatio(2)
+        logo.setPixmap(pm)
+        brand.addWidget(logo)
+        names = QVBoxLayout()
+        names.setSpacing(0)
+        t = QLabel("Kinah Forge")
+        t.setObjectName("Brand")
+        s = QLabel("Aion 2 Income Assistant")
+        s.setObjectName("BrandSub")
+        names.addWidget(t)
+        names.addWidget(s)
+        brand.addLayout(names, 1)
+        lay.addLayout(brand)
+        lay.addSpacing(26)
+
+        sec = QLabel("MENU")
+        sec.setObjectName("SectionTitle")
+        lay.addWidget(sec)
+        lay.addSpacing(4)
+        self.nav_group = QButtonGroup(self)
+        self.nav_group.setExclusive(True)
+        self.nav_buttons = []
+        for i, (key, title, _) in enumerate(PAGES):
+            b = QPushButton("  " + title)
+            b.setObjectName("Nav")
+            b.setCheckable(True)
+            b.setIcon(theme.nav_icon(key))
+            b.setIconSize(QSize(18, 18))
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, i=i: self.tabs.setCurrentIndex(i))
+            self.nav_group.addButton(b, i)
+            self.nav_buttons.append(b)
+            lay.addWidget(b)
+        lay.addStretch(1)
+
+        pill = QFrame()
+        pill.setObjectName("ServerPill")
+        pl = QHBoxLayout(pill)
+        pl.setContentsMargins(12, 10, 12, 10)
+        dot = QLabel("●")
+        dot.setStyleSheet(f"color:{theme.VIOLET};font-size:14pt")
+        pl.addWidget(dot)
+        pv = QVBoxLayout()
+        pv.setSpacing(0)
+        a = QLabel("LUMIEL")
+        a.setStyleSheet("font-weight:700;letter-spacing:1px")
+        b2 = muted("Asmodian · NA East")
+        b2.setStyleSheet(f"color:{theme.MUTED};font-size:8.5pt")
+        pv.addWidget(a)
+        pv.addWidget(b2)
+        pl.addLayout(pv, 1)
+        lay.addWidget(pill)
+        lay.addSpacing(8)
+        src = QLabel("Market data · aion2.exchange<br>Read-only · never touches the game")
+        src.setStyleSheet(f"color:{theme.FAINT};font-size:8pt")
+        lay.addWidget(src)
+        return side
+
+    def _build_header(self):
         bar = QHBoxLayout()
-        title = QLabel("<b>Lumiel</b> market (Asmodian) · data: aion2.exchange")
-        self.refresh_btn = QPushButton("⟳  Refresh")
-        self.refresh_btn.setMinimumHeight(32)
-        self.refresh_btn.setStyleSheet("font-weight:bold;padding:4px 18px")
-        self.refresh_btn.clicked.connect(self.refresh)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        self.progress.setMaximumWidth(220)
-        self.progress.hide()
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
+        self.page_title = QLabel()
+        self.page_title.setObjectName("PageTitle")
+        self.page_subtitle = QLabel()
+        self.page_subtitle.setObjectName("PageSubtitle")
+        titles.addWidget(self.page_title)
+        titles.addWidget(self.page_subtitle)
+        bar.addLayout(titles, 1)
+        self.status_dot = QLabel("●")
+        self.status_dot.setStyleSheet(f"color:{theme.FAINT};font-size:11pt")
         self.status = QLabel("Not loaded yet")
-        bar.addWidget(title)
-        bar.addStretch(1)
+        self.status.setObjectName("Muted")
+        bar.addWidget(self.status_dot)
         bar.addWidget(self.status)
-        bar.addWidget(self.progress)
+        bar.addSpacing(12)
+        self.refresh_btn = QPushButton("  Refresh")
+        self.refresh_btn.setObjectName("Primary")
+        self.refresh_btn.setIcon(theme.nav_icon("refresh", "#1a1204"))
+        self.refresh_btn.setIconSize(QSize(16, 16))
+        self.refresh_btn.setCursor(Qt.PointingHandCursor)
+        self.refresh_btn.setShortcut("F5")
+        self.refresh_btn.setToolTip("Download the latest Lumiel prices (F5)")
+        self.refresh_btn.clicked.connect(self.refresh)
         bar.addWidget(self.refresh_btn)
         return bar
 
-    # ── tab 1: best ways to earn ─────────────────────────────────────────
+    def _page_changed(self, i):
+        if 0 <= i < len(PAGES):
+            self.page_title.setText(PAGES[i][1])
+            self.page_subtitle.setText(PAGES[i][2])
+            self.nav_buttons[i].setChecked(True)
+            for j, (key, _, _) in enumerate(PAGES):
+                self.nav_buttons[j].setIcon(theme.nav_icon(key, theme.GOLD if j == i else theme.MUTED))
 
-    def _risk_boxes(self):
+    def _set_status(self, text, color):
+        self.status.setText(text)
+        self.status_dot.setStyleSheet(f"color:{color};font-size:11pt")
+
+    # ── page 1: best ways to earn ────────────────────────────────────────
+
+    def _risk_boxes(self, row):
         boxes = {}
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Show:"))
         tips = {
             "Safe": "Plenty of sales and stable prices; still profitable if prices drop to their recent low.",
             "Moderate": "Profitable on average with decent evidence, but could lose a little if the market dips.",
@@ -125,65 +280,97 @@ class MainWindow(QMainWindow):
         }
         for r in ("Safe", "Moderate", "Risky"):
             cb = QCheckBox(r)
+            cb.setObjectName("Chip")
             cb.setChecked(r in self.settings.risks)
-            cb.setStyleSheet(f"color:{RISK_COLORS[r]};font-weight:bold")
+            cb.setStyleSheet(f"QCheckBox#Chip {{ color:{RISK_COLORS[r]}; font-weight:600; }}"
+                             f"QCheckBox#Chip::indicator:checked {{ background:{RISK_COLORS[r]};"
+                             f" border:1px solid {RISK_COLORS[r]}; }}")
             cb.setToolTip(tips[r])
+            cb.setCursor(Qt.PointingHandCursor)
             cb.toggled.connect(self._risks_changed)
             boxes[r] = cb
             row.addWidget(cb)
-        return row, boxes
+        return boxes
 
     def _build_best_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
-        filt, self.risk_boxes = self._risk_boxes()
-        filt.addSpacing(20)
-        filt.addWidget(QLabel("Method:"))
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(12)
+        kpis = QHBoxLayout()
+        kpis.setSpacing(12)
+        self.kpi_best = KpiCard("Top profit / day", theme.GOLD)
+        self.kpi_safe = KpiCard("Safe options", theme.GREEN)
+        self.kpi_fast = KpiCard("Fast sellers", theme.VIOLET)
+        self.kpi_items = KpiCard("Items tracked", theme.TEXT)
+        for k in (self.kpi_best, self.kpi_safe, self.kpi_fast, self.kpi_items):
+            kpis.addWidget(k)
+        lay.addLayout(kpis)
+
+        filt = QHBoxLayout()
+        filt.setSpacing(8)
+        self.risk_boxes = self._risk_boxes(filt)
+        filt.addSpacing(10)
         self.method_box = QComboBox()
-        self.method_box.addItems(["All", "Craft", "Resell"])
+        self.method_box.addItems(["All methods", "Craft", "Resell"])
         self.method_box.currentIndexChanged.connect(self._apply_best_filter)
         filt.addWidget(self.method_box)
-        self.fast_box = QCheckBox("Fast sellers only (sells within a day)")
+        self.fast_box = QCheckBox("⚡ Fast sellers only")
+        self.fast_box.setObjectName("Chip")
+        self.fast_box.setToolTip("Only things that sell within about a day")
+        self.fast_box.setCursor(Qt.PointingHandCursor)
         self.fast_box.toggled.connect(self._apply_best_filter)
         filt.addWidget(self.fast_box)
+        filt.addStretch(1)
         self.best_search = QLineEdit()
         self.best_search.setPlaceholderText("Search item…")
+        self.best_search.setClearButtonEnabled(True)
+        self.best_search.setFixedWidth(260)
         self.best_search.textChanged.connect(self._apply_best_filter)
-        filt.addWidget(self.best_search, 1)
+        filt.addWidget(self.best_search)
         lay.addLayout(filt)
 
         cols = [
             Column("Risk", lambda o: RISK_ORDER[o.risk], lambda o: o.risk, color=lambda o: RISK_COLORS[o.risk],
-                   tip=lambda o: "\n".join(o.reasons) or "No warnings"),
-            Column("Method", lambda o: o.method),
-            Column("Item", lambda o: o.name.lower(), lambda o: o.name, width=260),
+                   tip=lambda o: "\n".join(o.reasons) or "No warnings", pill=True, width=118),
+            Column("Method", lambda o: o.method, color=lambda o: METHOD_COLORS[o.method], pill=True, width=112),
+            Column("Item", lambda o: o.name.lower(), lambda o: o.name, width=270, bold=True),
             Column("Profit / day", lambda o: o.profit_day, lambda o: kinah(o.profit_day), align="right",
+                   color=lambda o: theme.GOLD, bold=True, width=120,
                    tip=lambda o: "What you can expect to earn per day, limited by how fast it sells"),
             Column("Profit / item", lambda o: o.profit_unit, lambda o: kinah(o.profit_unit), align="right",
+                   color=lambda o: theme.GREEN, width=115,
                    tip=lambda o: "Per item bought (per craft attempt for crafts), after market tax and fee"),
-            Column("ROI", lambda o: o.roi, lambda o: pct(o.roi), align="right"),
+            Column("ROI", lambda o: o.roi, lambda o: pct(o.roi), align="right", width=70),
             Column("Sells in", lambda o: o.sell_days if o.sell_days is not None else 1e9,
-                   lambda o: speed_text(o.sell_days), align="right",
+                   lambda o: speed_text(o.sell_days), align="right", width=95,
+                   color=lambda o: theme.VIOLET if o.fast else None,
                    tip=lambda o: "Time for a one-day batch to sell at the suggested price"),
-            Column("Buy now", lambda o: o.batch, lambda o: f"{o.batch}", align="right",
+            Column("Buy now", lambda o: o.batch, lambda o: f"{o.batch}", align="right", width=85,
                    tip=lambda o: "Suggested amount: about one day of what you can sell"),
             Column("Cost / item", lambda o: o.cost_unit, lambda o: kinah(o.cost_unit), align="right"),
             Column("Sell at", lambda o: o.sell_price, lambda o: kinah(o.sell_price), align="right"),
-            Column("Why / warnings", lambda o: len(o.reasons),
-                   lambda o: "; ".join(o.reasons[:2]) if o.reasons else "; ".join(o.good[:1])),
+            Column("Notes", lambda o: len(o.reasons),
+                   lambda o: "; ".join(o.reasons[:2]) if o.reasons else "; ".join(o.good[:1]),
+                   color=lambda o: theme.MUTED),
         ]
         self.best_model, self.best_proxy, self.best_view = make_table(cols)
         self.best_view.sortByColumn(3, Qt.DescendingOrder)
         self.best_view.selectionModel().selectionChanged.connect(self._best_selected)
-        self.best_detail = QTextBrowser()
+        self.best_detail = browser()
+        self.best_detail.setHtml(self._empty_detail("Select a row to see exactly what to do."))
         split = QSplitter(Qt.Vertical)
         split.addWidget(self.best_view)
         split.addWidget(self.best_detail)
-        split.setSizes([480, 220])
+        split.setSizes([430, 260])
+        split.setChildrenCollapsible(False)
         lay.addWidget(split, 1)
-        self.best_count = QLabel()
+        self.best_count = muted("")
         lay.addWidget(self.best_count)
         return w
+
+    def _empty_detail(self, text):
+        return f"<p class='muted' style='margin-top:12px'>{esc(text)}</p>"
 
     def _apply_best_filter(self):
         risks = {r for r, cb in self.risk_boxes.items() if cb.isChecked()}
@@ -192,13 +379,13 @@ class MainWindow(QMainWindow):
         q = self.best_search.text().strip().lower()
 
         def ok(o):
-            return (o.risk in risks and (method == "All" or o.method == method)
+            return (o.risk in risks and (method == "All methods" or o.method == method)
                     and (not fast or o.fast) and (not q or q in o.name.lower()))
         self.best_proxy.set_predicate(ok)
         n = self.best_proxy.rowCount()
         total = len(self.best_model.rows)
-        self.best_count.setText(f"{n} of {total} opportunities shown · sorted by the column you click "
-                                f"(default: profit per day, which rewards fast sellers)")
+        self.best_count.setText(f"{n} of {total} opportunities · click a column to sort · default sort is profit "
+                                f"per day, which favours fast sellers")
 
     def _risks_changed(self):
         self.settings.risks = [r for r, cb in self.risk_boxes.items() if cb.isChecked()]
@@ -208,132 +395,172 @@ class MainWindow(QMainWindow):
 
     def _best_selected(self):
         o = selected_row(self.best_view)
-        self.best_detail.setHtml(self.opportunity_html(o) if o else "")
+        self.best_detail.setHtml(self.opportunity_html(o) if o else self._empty_detail("Select a row."))
 
     def opportunity_html(self, o) -> str:
         s = self.settings
-        out = [f"<h3>{esc(o.name)} — {esc(o.method)} · {risk_badge(o.risk)}</h3>"]
         st = o.stats
+        sub = "buy low, sell at the usual price"
+        if o.method == "Craft":
+            sub = f"{o.craft.profession.split(' (')[0]} · recipe lv {o.craft.recipe.level}"
+        out = [f"<h2>{esc(o.name)}</h2>",
+               f"<p>{pill_html(o.risk, RISK_COLORS[o.risk])}&nbsp;&nbsp;{pill_html(o.method, METHOD_COLORS[o.method])}"
+               f"&nbsp;&nbsp;<span class='muted'>{esc(sub)}</span></p>",
+               "<table cellspacing=0><tr>",
+               stat_cell("Profit / day", kinah(o.profit_day), theme.GOLD),
+               stat_cell("Profit / item", kinah(o.profit_unit, True), theme.GREEN),
+               stat_cell("Sells in", speed_text(o.sell_days), theme.VIOLET if o.fast else theme.TEXT),
+               stat_cell("Buy now", str(o.batch)),
+               stat_cell("Sell at", kinah(o.sell_price)),
+               "</tr></table>"]
         if o.method == "Craft":
             c = o.craft
-            prof = c.profession
             out.append(
-                f"<p><b>What to do:</b> buy the ingredients below, craft with <b>{esc(prof)}</b> "
-                f"(recipe level {c.recipe.level}, your success ≈ <b>{c.success:.1%}</b>), then sell at about "
-                f"<b>{kinah(o.sell_price)}</b> each.</p>")
-            out.append("<table cellspacing=4><tr><th align=left>Ingredient</th><th>Qty</th><th>Unit cost</th>"
-                       "<th>Total</th><th align=left>Cheapest way to get it</th></tr>")
+                f"<p><b>What to do:</b> buy the ingredients below, craft with <b>{esc(c.profession)}</b> "
+                f"(your success ≈ <span class='gold'>{c.success:.1%}</span>), then sell at about "
+                f"<span class='gold'>{kinah(o.sell_price)}</span> each.</p>")
+            out.append("<table cellspacing=0><tr><th>INGREDIENT</th><th align=right>QTY</th>"
+                       "<th align=right>UNIT</th><th align=right>TOTAL</th><th>CHEAPEST SOURCE</th></tr>")
             for line in c.lines:
+                src_cls = "gold" if line.source.how == "morph" else ("amber" if "estimated" in line.source.detail
+                                                                     else "muted")
                 out.append(f"<tr><td>{esc(line.name)}</td><td align=right>{line.qty}</td>"
                            f"<td align=right>{kinah(line.unit)}</td><td align=right>{kinah(line.unit * line.qty)}</td>"
-                           f"<td>{esc(line.source.detail)}</td></tr>")
+                           f"<td class='{src_cls}'>{esc(line.source.detail)}</td></tr>")
             if c.recipe.gold:
                 out.append(f"<tr><td>Crafting fee</td><td></td><td></td><td align=right>{kinah(c.recipe.gold)}</td>"
-                           f"<td>kinah</td></tr>")
+                           f"<td class='muted'>kinah</td></tr>")
             out.append("</table>")
             out.append(
-                f"<p>Per attempt: cost <b>{kinah(c.cost)}</b>, expected back <b>{kinah(c.ev)}</b> after "
-                f"{s.tax_pct:g}% tax + {s.fee_pct:g}% listing fee → profit <b>{kinah(c.profit, True)}</b> "
-                f"(if prices dip: {kinah(c.profit_pessimistic, True)}).<br>"
-                f"Outcomes: fail {c.p_fail:.1%} · normal {c.p_plain:.1%}"
+                f"<p>Per attempt: cost <b>{kinah(c.cost)}</b> → expected back <b>{kinah(c.ev)}</b> after "
+                f"{s.tax_pct:g}% tax + {s.fee_pct:g}% fee = <span class='green'>{kinah(c.profit, True)}</span> "
+                f"<span class='muted'>(if prices dip: {kinah(c.profit_pessimistic, True)})</span><br>"
+                f"<span class='muted'>Outcomes:</span> fail {c.p_fail:.1%} · normal {c.p_plain:.1%}"
                 + (f" · Splendent {c.p_combo:.1%} (sells ~{kinah(c.combo_value / s.keep if s.keep else 0)})"
                    if c.combo_key else "")
-                + f"<br>Chance that 10 crafts lose money overall: {batch_loss_probability(c, 10):.0%}</p>")
+                + f" · <span class='muted'>chance 10 crafts lose money:</span> {batch_loss_probability(c, 10):.0%}</p>")
         else:
             out.append(
-                f"<p><b>What to do:</b> buy at <b>{kinah(o.buy_price)}</b> or less (cheapest listing now "
-                f"{kinah(st.ask)}), then list in small lots at about <b>{kinah(o.sell_price)}</b> "
-                f"(its usual price, {esc(st.ref_basis)}). Buyers usually take small amounts, so sell a few at a "
-                f"time instead of one big stack.</p>"
-                f"<p>Per item: profit <b>{kinah(o.profit_unit, True)}</b> after {s.tax_pct:g}% tax + "
-                f"{s.fee_pct:g}% fee (if the price stays low: {kinah(o.profit_pess_unit, True)}).</p>")
+                f"<p><b>What to do:</b> buy at <span class='gold'>{kinah(o.buy_price)}</span> or less (cheapest "
+                f"listing now {kinah(st.ask)}), then list in small lots at about "
+                f"<span class='gold'>{kinah(o.sell_price)}</span> — its usual price ({esc(st.ref_basis)}). Buyers "
+                f"usually take small amounts, so sell a few at a time instead of one big stack.</p>"
+                f"<p>Per item: <span class='green'>{kinah(o.profit_unit, True)}</span> after {s.tax_pct:g}% tax + "
+                f"{s.fee_pct:g}% fee <span class='muted'>(if the price stays low: "
+                f"{kinah(o.profit_pess_unit, True)})</span></p>")
         if st:
             mk = f"~{st.sales_per_day:.1f}/day" if st.sales_per_day is not None else "unknown"
             out.append(
-                f"<p><b>Speed:</b> the market buys {mk} ({esc(st.sales_basis)}). As one more seller you can "
-                f"expect about {MARKET_SHARE:.0%} of that: ~{o.your_per_day:.1f}/day. Suggested batch: "
-                f"<b>{o.batch}</b>, sells in {speed_text(o.sell_days)}. Listings now: {st.listings}.</p>")
+                f"<p><span class='muted'>Speed:</span> the market buys {mk} ({esc(st.sales_basis)}); as one more "
+                f"seller you can expect ~{MARKET_SHARE:.0%} of that, ~{o.your_per_day:.1f}/day. "
+                f"Listings now: {st.listings}.</p>")
         if o.good:
-            out.append("<p style='color:#1b8a3a'>✔ " + "<br>✔ ".join(esc(g) for g in o.good) + "</p>")
+            out.append("<p class='green'>✔ " + "<br>✔ ".join(esc(g) for g in o.good) + "</p>")
         if o.reasons:
-            out.append("<p style='color:#c0392b'>⚠ " + "<br>⚠ ".join(esc(r) for r in o.reasons) + "</p>")
+            out.append("<p class='red'>⚠ " + "<br>⚠ ".join(esc(r) for r in o.reasons) + "</p>")
         return "".join(out)
 
-    # ── tab 2: plan ──────────────────────────────────────────────────────
+    # ── page 2: plan ─────────────────────────────────────────────────────
 
     def _build_plan_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(12)
+
         top = QHBoxLayout()
-        top.addWidget(QLabel("Kinah I can spend:"))
+        top.setSpacing(10)
+        top.addWidget(muted("KINAH TO SPEND"))
         self.budget_edit = QLineEdit(short(self.settings.budget).replace(".00", ""))
-        self.budget_edit.setPlaceholderText("e.g. 5m, 500k, 12000000")
-        self.budget_edit.setMaximumWidth(160)
+        self.budget_edit.setPlaceholderText("e.g. 5m, 500k")
+        self.budget_edit.setFixedWidth(150)
         self.budget_edit.editingFinished.connect(self._budget_changed)
         top.addWidget(self.budget_edit)
-        top.addSpacing(16)
-        top.addWidget(QLabel("Sell everything within:"))
+        top.addSpacing(14)
+        top.addWidget(muted("SELL WITHIN"))
         self.horizon_box = QComboBox()
         for label, _ in HORIZONS:
             self.horizon_box.addItem(label)
-        self.horizon_box.setCurrentIndex(next((i for i, (_, h) in enumerate(HORIZONS) if h == self.settings.horizon), 1))
+        self.horizon_box.setCurrentIndex(next((i for i, (_, hh) in enumerate(HORIZONS) if hh == self.settings.horizon), 1))
         self.horizon_box.currentIndexChanged.connect(self._horizon_changed)
         top.addWidget(self.horizon_box)
-        top.addSpacing(16)
-        self.plan_risk_label = QLabel()
-        top.addWidget(self.plan_risk_label)
         top.addStretch(1)
+        self.plan_risk_label = muted("")
+        top.addWidget(self.plan_risk_label)
         lay.addLayout(top)
 
-        self.plan_summary = QLabel()
-        self.plan_summary.setStyleSheet("font-size:15px;padding:6px")
+        kpis = QHBoxLayout()
+        kpis.setSpacing(12)
+        self.kpi_spend = KpiCard("Spend now", theme.TEXT)
+        self.kpi_profit = KpiCard("Expected profit", theme.GREEN)
+        self.kpi_day = KpiCard("Profit per day", theme.GOLD)
+        self.kpi_spare = KpiCard("Kept spare", theme.MUTED)
+        for k in (self.kpi_spend, self.kpi_profit, self.kpi_day, self.kpi_spare):
+            kpis.addWidget(k)
+        lay.addLayout(kpis)
+
+        self.plan_summary = muted("")
         self.plan_summary.setWordWrap(True)
         lay.addWidget(self.plan_summary)
 
         cols = [
             Column("Risk", lambda l: RISK_ORDER[l.op.risk], lambda l: l.op.risk, color=lambda l: RISK_COLORS[l.op.risk],
-                   tip=lambda l: "\n".join(l.op.reasons) or "No warnings"),
-            Column("Do this", lambda l: l.op.method, lambda l: "Craft" if l.op.method == "Craft" else "Buy & resell"),
-            Column("Sells in", lambda l: l.op.sell_days or 1e9, lambda l: speed_text(l.op.sell_days), align="right"),
-            Column("Item", lambda l: l.op.name.lower(), lambda l: l.op.name, width=260),
+                   tip=lambda l: "\n".join(l.op.reasons) or "No warnings", pill=True, width=118),
+            Column("Do this", lambda l: l.op.method, lambda l: "Craft" if l.op.method == "Craft" else "Resell",
+                   color=lambda l: METHOD_COLORS[l.op.method], pill=True, width=112),
+            Column("Sells in", lambda l: l.op.sell_days or 1e9, lambda l: speed_text(l.op.sell_days), align="right",
+                   width=90),
+            Column("Item", lambda l: l.op.name.lower(), lambda l: l.op.name, width=270, bold=True),
             Column("Amount now", lambda l: l.units, lambda l: f"{l.units}" + (" crafts" if l.op.method == "Craft" else ""),
                    align="right"),
             Column("Spend now", lambda l: l.capital, lambda l: kinah(l.capital), align="right"),
             Column("Sell at", lambda l: l.op.sell_price, lambda l: kinah(l.op.sell_price), align="right"),
             Column("Expected profit", lambda l: l.profit, lambda l: kinah(l.profit, True), align="right",
-                   tip=lambda l: "Over the whole period, re-buying as it sells", width=120),
+                   color=lambda l: theme.GREEN, bold=True,
+                   tip=lambda l: "Over the whole period, re-buying as it sells", width=130),
         ]
         self.plan_model, self.plan_proxy, self.plan_view = make_table(cols)
         self.plan_view.sortByColumn(7, Qt.DescendingOrder)
         self.plan_view.selectionModel().selectionChanged.connect(
             lambda: self.plan_detail.setHtml(self.opportunity_html(selected_row(self.plan_view).op)
                                              if selected_row(self.plan_view) else ""))
-        self.plan_detail = QTextBrowser()
+        self.plan_detail = browser()
+        self.plan_detail.setHtml(self._empty_detail("Select a row to see exactly what to do."))
         split = QSplitter(Qt.Vertical)
         split.addWidget(self.plan_view)
         split.addWidget(self.plan_detail)
-        split.setSizes([330, 160])
+        split.setSizes([300, 170])
+        split.setChildrenCollapsible(False)
         lay.addWidget(split, 1)
 
-        hold = QGroupBox("How much kinah is worth holding for trading (based on what the market can absorb)")
-        hl = QHBoxLayout(hold)
+        sec = QLabel("HOW MUCH KINAH IS WORTH HOLDING FOR TRADING")
+        sec.setObjectName("SectionTitle")
+        lay.addWidget(sec)
+        tiers = QHBoxLayout()
+        tiers.setSpacing(12)
         self.tier_labels = []
         for name in ("Low", "Mid", "High"):
+            f = QFrame()
+            f.setObjectName("TierCard")
+            f.setProperty("accent", name == "Mid")
+            fl = QVBoxLayout(f)
+            fl.setContentsMargins(16, 12, 16, 12)
             lab = QLabel(f"<b>{name}</b><br>—")
-            lab.setAlignment(Qt.AlignCenter)
-            lab.setFrameShape(QFrame.StyledPanel)
-            lab.setMinimumHeight(70)
-            hl.addWidget(lab)
+            lab.setTextFormat(Qt.RichText)
+            fl.addWidget(lab)
+            tiers.addWidget(f)
             self.tier_labels.append(lab)
-        lay.addWidget(hold)
+        lay.addLayout(tiers)
         return w
 
     def _budget_changed(self):
         v = parse_kinah(self.budget_edit.text())
         if v is None or v <= 0:
-            self.budget_edit.setStyleSheet("border:1px solid #c0392b")
+            self.budget_edit.setProperty("invalid", True)
+            self.budget_edit.style().polish(self.budget_edit)
             return
-        self.budget_edit.setStyleSheet("")
+        self.budget_edit.setProperty("invalid", False)
+        self.budget_edit.style().polish(self.budget_edit)
         self.settings.budget = v
         self._save_settings()
         self._update_plan()
@@ -349,69 +576,88 @@ class MainWindow(QMainWindow):
         return [o for o in self.analysis.ops if o.risk in self.settings.risks]
 
     def _update_plan(self):
-        self.plan_risk_label.setText("Using: " + (", ".join(self.settings.risks) or "nothing (tick a risk level)")
-                                     + "  (change on the first tab)")
+        self.plan_risk_label.setText("Risk levels: " + (", ".join(self.settings.risks) or "none ticked")
+                                     + " · change them on Best ways to earn")
         ops = self.plan_ops()
         p = make_plan(ops, self.settings.budget, self.settings.horizon)
         self.current_plan = p
         self.plan_model.set_rows(p.lines)
         if not self.analysis:
             self.plan_summary.setText("Press Refresh to load the market.")
+            for k in (self.kpi_spend, self.kpi_profit, self.kpi_day, self.kpi_spare):
+                k.set("—")
         elif not p.lines:
             self.plan_summary.setText("Nothing fits these settings. Tick more risk levels, raise the budget, or set "
                                       "your crafting levels in Settings.")
+            for k in (self.kpi_spend, self.kpi_profit, self.kpi_day, self.kpi_spare):
+                k.set("—")
         else:
+            roi = p.profit / p.capital if p.capital else 0
+            self.kpi_spend.set(short(p.capital), f"of {short(p.budget)} budget")
+            self.kpi_profit.set("+" + short(p.profit), f"over {self.horizon_box.currentText()} · {roi:.0%} return")
+            self.kpi_day.set("+" + short(p.profit_per_day), "re-buying as items sell")
+            self.kpi_spare.set(short(p.leftover), "market can't absorb more" if p.leftover > 0.2 * p.budget else "")
             self.plan_summary.setText(
-                f"Spend <b>{kinah(p.capital)}</b> now → expected profit <b>{kinah(p.profit, True)}</b> over "
-                f"{self.horizon_box.currentText()} (≈ <b>{kinah(p.profit_per_day)}</b>/day, "
-                f"{(p.profit / p.capital if p.capital else 0):.0%} on what you spend). "
-                f"Keep {kinah(p.leftover)} spare"
+                f"Spend {kinah(p.capital)} now → expected profit {kinah(p.profit, True)} over "
+                f"{self.horizon_box.currentText()} (≈ {kinah(p.profit_per_day)}/day). Keep {kinah(p.leftover)} spare"
                 + (" — the market can't absorb more of these items in this time." if p.leftover > 0.2 * p.budget
                    else "."))
         tiers = holding_tiers(ops, self.settings.horizon) if ops else []
         for lab, name in zip(self.tier_labels, ("Low", "Mid", "High")):
             t = next((t for t in tiers if t.label == name), None)
+            color = theme.GOLD if name == "Mid" else theme.TEXT
             if t:
-                lab.setText(f"<b>{name}</b><br><span style='font-size:16px'>{short(t.amount)}</span><br>"
-                            f"≈ {short(t.profit_per_day)} profit/day")
+                lab.setText(f"<span style='color:{theme.MUTED};font-size:8.5pt;font-weight:600'>{name.upper()}"
+                            f"{' · RECOMMENDED' if name == 'Mid' else ''}</span><br>"
+                            f"<span style='font-size:18pt;font-weight:650;color:{color}'>{short(t.amount)}</span><br>"
+                            f"<span style='color:{theme.GREEN}'>≈ +{short(t.profit_per_day)} / day</span>")
             else:
-                lab.setText(f"<b>{name}</b><br>—")
+                lab.setText(f"<span style='color:{theme.MUTED};font-size:8.5pt;font-weight:600'>{name.upper()}</span>"
+                            f"<br><span style='font-size:18pt;color:{theme.FAINT}'>—</span>")
 
-    # ── tab 3: crafting ──────────────────────────────────────────────────
+    # ── page 3: crafting ─────────────────────────────────────────────────
 
     def _build_craft_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(12)
         top = QHBoxLayout()
-        top.addWidget(QLabel("Profession:"))
+        top.setSpacing(8)
         self.prof_box = QComboBox()
-        self.prof_box.addItem("All", None)
+        self.prof_box.addItem("All professions", None)
         for k, v in PROFESSIONS.items():
             self.prof_box.addItem(v.split(" (")[0], k)
         self.prof_box.currentIndexChanged.connect(self._apply_craft_filter)
         top.addWidget(self.prof_box)
         self.craft_profit_only = QCheckBox("Profitable only")
+        self.craft_profit_only.setObjectName("Chip")
         self.craft_profit_only.setChecked(True)
         self.craft_profit_only.toggled.connect(self._apply_craft_filter)
         top.addWidget(self.craft_profit_only)
+        top.addStretch(1)
         self.craft_search = QLineEdit()
         self.craft_search.setPlaceholderText("Search recipe…")
+        self.craft_search.setClearButtonEnabled(True)
+        self.craft_search.setFixedWidth(260)
         self.craft_search.textChanged.connect(self._apply_craft_filter)
-        top.addWidget(self.craft_search, 1)
+        top.addWidget(self.craft_search)
         lay.addLayout(top)
         cols = [
-            Column("Item", lambda c: c.name.lower(), lambda c: c.name, width=280),
-            Column("Profession", lambda c: c.profession, lambda c: c.profession.split(" (")[0], width=130),
-            Column("Lvl", lambda c: c.recipe.level, align="right"),
+            Column("Item", lambda c: c.name.lower(), lambda c: c.name, width=290, bold=True),
+            Column("Profession", lambda c: c.profession, lambda c: c.profession.split(" (")[0], width=140,
+                   color=lambda c: theme.MUTED),
+            Column("Lvl", lambda c: c.recipe.level, align="right", width=60),
             Column("Success", lambda c: c.success, lambda c: f"{c.success:.1%}"
-                   + (" ✎" if c.recipe.id in self.settings.overrides else ""), align="right",
-                   tip=lambda c: "Estimated from your level; set your in-game value in the panel below"),
+                   + (" ✎" if c.recipe.id in self.settings.overrides else ""), align="right", width=95,
+                   color=lambda c: theme.VIOLET if c.recipe.id in self.settings.overrides else None,
+                   tip=lambda c: "Estimated from your level; set your in-game value below"),
             Column("Cost / craft", lambda c: c.cost, lambda c: kinah(c.cost), align="right"),
-            Column("Expected back", lambda c: c.ev, lambda c: kinah(c.ev), align="right"),
-            Column("Profit / craft", lambda c: c.profit, lambda c: kinah(c.profit, True), align="right",
-                   color=lambda c: "#1b8a3a" if c.profit > 0 else "#c0392b"),
+            Column("Expected back", lambda c: c.ev, lambda c: kinah(c.ev), align="right", width=120),
+            Column("Profit / craft", lambda c: c.profit, lambda c: kinah(c.profit, True), align="right", bold=True,
+                   color=lambda c: theme.GREEN if c.profit > 0 else theme.RED, width=120),
             Column("If prices dip", lambda c: c.profit_pessimistic, lambda c: kinah(c.profit_pessimistic, True),
-                   align="right"),
+                   align="right", color=lambda c: theme.MUTED, width=115),
             Column("Sold / day", lambda c: self._sales(c.out_key), lambda c: self._sales_text(c.out_key), align="right"),
         ]
         self.craft_model, self.craft_proxy, self.craft_view = make_table(cols)
@@ -420,24 +666,31 @@ class MainWindow(QMainWindow):
 
         bottom = QWidget()
         bl = QVBoxLayout(bottom)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(8)
         ov = QHBoxLayout()
-        ov.addWidget(QLabel("Your in-game success % for this recipe (0 = estimate from level):"))
+        ov.addWidget(muted("Your in-game success % for this recipe (0 = estimate from your level)"))
         self.override_spin = QDoubleSpinBox()
         self.override_spin.setRange(0, 100)
         self.override_spin.setDecimals(2)
+        self.override_spin.setSuffix(" %")
+        self.override_spin.setFixedWidth(120)
         self.override_spin.setEnabled(False)
         self.override_spin.editingFinished.connect(self._override_changed)
         ov.addWidget(self.override_spin)
         ov.addStretch(1)
         bl.addLayout(ov)
-        self.craft_detail = QTextBrowser()
+        self.craft_detail = browser()
+        self.craft_detail.setHtml(self._empty_detail("Select a recipe to see its ingredients and where to get "
+                                                     "each one cheapest."))
         bl.addWidget(self.craft_detail)
         split = QSplitter(Qt.Vertical)
         split.addWidget(self.craft_view)
         split.addWidget(bottom)
-        split.setSizes([450, 260])
+        split.setSizes([440, 280])
+        split.setChildrenCollapsible(False)
         lay.addWidget(split, 1)
-        self.craft_hint = QLabel()
+        self.craft_hint = muted("")
         self.craft_hint.setWordWrap(True)
         lay.addWidget(self.craft_hint)
         return w
@@ -461,7 +714,7 @@ class MainWindow(QMainWindow):
         c = selected_row(self.craft_view)
         if not c:
             self.override_spin.setEnabled(False)
-            self.craft_detail.setHtml("")
+            self.craft_detail.setHtml(self._empty_detail("Select a recipe."))
             return
         self.override_spin.setEnabled(True)
         self.override_spin.blockSignals(True)
@@ -472,10 +725,12 @@ class MainWindow(QMainWindow):
             self.craft_detail.setHtml(self.opportunity_html(op))
         else:
             lines = "".join(f"<tr><td>{esc(l.name)}</td><td align=right>{l.qty}</td><td align=right>{kinah(l.unit)}</td>"
-                            f"<td>{esc(l.source.detail)}</td></tr>" for l in c.lines)
+                            f"<td class='muted'>{esc(l.source.detail)}</td></tr>" for l in c.lines)
             self.craft_detail.setHtml(
-                f"<h3>{esc(c.name)}</h3><p>Not profitable right now: cost {kinah(c.cost)} per attempt, expected back "
-                f"{kinah(c.ev)} (success {c.success:.1%}).</p><table cellspacing=4>{lines}</table>")
+                f"<h2>{esc(c.name)}</h2><p class='red'>Not profitable right now: cost {kinah(c.cost)} per attempt, "
+                f"expected back {kinah(c.ev)} (success {c.success:.1%}).</p>"
+                f"<table cellspacing=0><tr><th>INGREDIENT</th><th align=right>QTY</th><th align=right>UNIT</th>"
+                f"<th>CHEAPEST SOURCE</th></tr>{lines}</table>")
 
     def _override_changed(self):
         c = selected_row(self.craft_view)
@@ -489,53 +744,68 @@ class MainWindow(QMainWindow):
         self._save_settings()
         self.schedule_recalc()
 
-    # ── tab 4: market ────────────────────────────────────────────────────
+    # ── page 4: market ───────────────────────────────────────────────────
 
     def _build_market_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(12)
         top = QHBoxLayout()
-        self.market_search = QLineEdit()
-        self.market_search.setPlaceholderText("Search item…")
-        self.market_search.textChanged.connect(self._apply_market_filter)
-        top.addWidget(self.market_search, 1)
+        top.setSpacing(8)
         self.market_section = QComboBox()
         self.market_section.addItem("All sections", None)
         self.market_section.currentIndexChanged.connect(self._apply_market_filter)
         top.addWidget(self.market_section)
-        self.market_reliable = QCheckBox("Hide unreliable (few listings / not selling)")
+        self.market_reliable = QCheckBox("Hide unreliable")
+        self.market_reliable.setObjectName("Chip")
+        self.market_reliable.setToolTip("Hide items with very few listings or that are not selling")
         self.market_reliable.toggled.connect(self._apply_market_filter)
         top.addWidget(self.market_reliable)
+        top.addStretch(1)
+        self.market_search = QLineEdit()
+        self.market_search.setPlaceholderText("Search item…")
+        self.market_search.setClearButtonEnabled(True)
+        self.market_search.setFixedWidth(260)
+        self.market_search.textChanged.connect(self._apply_market_filter)
+        top.addWidget(self.market_search)
         lay.addLayout(top)
         cols = [
-            Column("Item", lambda s: s.name.lower(), lambda s: s.name, width=260),
-            Column("Category", lambda s: s.category or "", lambda s: s.category or "", width=150),
-            Column("Cheapest now", lambda s: s.ask, lambda s: kinah(s.ask), align="right"),
-            Column("Listings", lambda s: s.listings, align="right"),
-            Column("Usual price", lambda s: s.ref, lambda s: kinah(s.ref), align="right",
-                   tip=lambda s: s.ref_basis),
-            Column("Change 24h", lambda s: s.change_pct, lambda s: "—" if s.change_pct is None else f"{s.change_pct:+.0f}%",
-                   align="right"),
-            Column("Trend 7d", lambda s: s.trend_7d, lambda s: pct(s.trend_7d, True), align="right"),
+            Column("Item", lambda s: s.name.lower(), lambda s: s.name, width=270, bold=True),
+            Column("Category", lambda s: s.category or "", lambda s: s.category or "", width=160,
+                   color=lambda s: theme.MUTED),
+            Column("Cheapest now", lambda s: s.ask, lambda s: kinah(s.ask), align="right", width=120),
+            Column("Listings", lambda s: s.listings, align="right", width=85),
+            Column("Usual price", lambda s: s.ref, lambda s: kinah(s.ref), align="right", width=115,
+                   color=lambda s: theme.GOLD if s.ref else None, tip=lambda s: s.ref_basis),
+            Column("24h", lambda s: s.change_pct, lambda s: "—" if s.change_pct is None else f"{s.change_pct:+.0f}%",
+                   align="right", width=75,
+                   color=lambda s: None if not s.change_pct else (theme.GREEN if s.change_pct > 0 else theme.RED)),
+            Column("7d", lambda s: s.trend_7d, lambda s: pct(s.trend_7d, True), align="right", width=70,
+                   color=lambda s: None if not s.trend_7d else (theme.GREEN if s.trend_7d > 0 else theme.RED)),
             Column("Sold / day", lambda s: s.sales_per_day, lambda s: "?" if s.sales_per_day is None else f"{s.sales_per_day:.1f}",
-                   align="right", tip=lambda s: s.sales_basis),
+                   align="right", tip=lambda s: s.sales_basis, width=95),
             Column("Cheaper via", lambda s: self._source_text(s.key), lambda s: self._source_text(s.key), width=300,
-                   tip=lambda s: "Cheaper than buying it (e.g. Substance Morph from Odyle)"),
-            Column("Notes", lambda s: len(s.flags), lambda s: ", ".join(s.flags)),
+                   color=lambda s: theme.GOLD, tip=lambda s: "Cheaper than buying it (e.g. Substance Morph from Odyle)"),
+            Column("Notes", lambda s: len(s.flags), lambda s: ", ".join(s.flags), color=lambda s: theme.AMBER),
         ]
         self.market_model, self.market_proxy, self.market_view = make_table(cols)
         self.market_view.sortByColumn(3, Qt.DescendingOrder)
         self.market_view.selectionModel().selectionChanged.connect(self._market_selected)
         bottom = QWidget()
         bl = QHBoxLayout(bottom)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(12)
         self.chart = PriceChart()
-        bl.addWidget(self.chart, 2)
-        self.market_detail = QTextBrowser()
-        bl.addWidget(self.market_detail, 1)
+        bl.addWidget(self.chart, 3)
+        self.market_detail = browser()
+        self.market_detail.setHtml(self._empty_detail("Select an item."))
+        bl.addWidget(self.market_detail, 2)
         split = QSplitter(Qt.Vertical)
         split.addWidget(self.market_view)
         split.addWidget(bottom)
-        split.setSizes([480, 200])
+        split.setSizes([450, 240])
+        split.setChildrenCollapsible(False)
         lay.addWidget(split, 1)
         return w
 
@@ -567,81 +837,101 @@ class MainWindow(QMainWindow):
                 closes.append(float(v))
         if not closes:
             closes = [p for _, p, _ in self.analysis.data.snapshots.get(s.key, []) if p]
-        self.chart.set_data(closes[-168:], s.ref)
+        self.chart.set_data(closes[-168:], s.ref, f"{s.name} · price history")
         h = history_stats(d.get("hourly") or [])
         src = self._source_text(s.key)
+        sold = "?" if s.sales_per_day is None else f"{s.sales_per_day:.1f}"
         self.market_detail.setHtml(
-            f"<h3>{esc(s.name)}</h3><p>Cheapest now: <b>{kinah(s.ask)}</b> ({s.listings} listings)<br>"
-            f"Usual price: <b>{kinah(s.ref)}</b> <small>({esc(s.ref_basis)})</small><br>"
-            f"Low end (25%): {kinah(s.pessimistic)} · swings ±{pct(s.volatility)}<br>"
-            f"Sold per day: {'?' if s.sales_per_day is None else f'{s.sales_per_day:.1f}'} "
-            f"<small>({esc(s.sales_basis)})</small><br>"
+            f"<h2>{esc(s.name)}</h2><p class='muted'>{esc(s.category or '')}</p>"
+            "<table cellspacing=0><tr>"
+            + stat_cell("Cheapest now", kinah(s.ask)) + stat_cell("Usual", kinah(s.ref), theme.GOLD)
+            + "</tr></table>"
+            f"<p>{s.listings} listings · low end {kinah(s.pessimistic)} · swings ±{pct(s.volatility)}<br>"
+            f"Sold per day: <b>{sold}</b> <span class='muted'>({esc(s.sales_basis)})</span><br>"
             + (f"Real sales (28 d): {s.units_sold_28d:,} at avg {kinah(s.sold_avg)}<br>" if s.units_sold_28d else "")
             + (f"Bulk buy now: {kinah(s.bulk_unit)} avg for {s.bulk_units} units<br>" if s.bulk_unit else "")
-            + (f"<b>Cheaper:</b> {esc(src)}<br>" if src else "")
-            + (f"<span style='color:#c0392b'>⚠ {esc(', '.join(s.flags))}</span>" if s.flags else "")
-            + f"<br><small>{h['n']} hourly points in the last 72 h</small></p>")
+            + (f"<span class='gold'>Cheaper: {esc(src)}</span><br>" if src else "")
+            + (f"<span class='amber'>⚠ {esc(', '.join(s.flags))}</span><br>" if s.flags else "")
+            + f"<span class='muted'>Cheapest now · {h['n']} hourly points in the last 72 h · "
+              f"usual price: {esc(s.ref_basis)}</span></p>")
 
-    # ── tab 5: settings ──────────────────────────────────────────────────
+    # ── page 5: settings ─────────────────────────────────────────────────
 
     def _build_settings_tab(self):
         w = QWidget()
         outer = QVBoxLayout(w)
+        outer.setContentsMargins(0, 4, 0, 0)
+        outer.setSpacing(12)
         grid = QGridLayout()
-        lv = QGroupBox("Your crafting levels (proficiency). 0 = you don't have this profession.")
-        form = QFormLayout(lv)
+        grid.setSpacing(12)
+
+        lv = QVBoxLayout()
+        t = QLabel("CRAFTING LEVELS")
+        t.setObjectName("SectionTitle")
+        lv.addWidget(t)
+        lv.addWidget(muted("Your proficiency in each profession. 0 = you don't have it."))
+        form = QFormLayout()
+        form.setSpacing(10)
+        form.setLabelAlignment(Qt.AlignLeft)
         self.level_spins = {}
         for k, label in PROFESSIONS.items():
             sp = QSpinBox()
             sp.setRange(0, 200)
+            sp.setFixedWidth(110)
             sp.setValue(int(self.settings.levels.get(k, 0)))
             sp.valueChanged.connect(self._levels_changed)
-            form.addRow(label + ":", sp)
+            form.addRow(label, sp)
             self.level_spins[k] = sp
-        grid.addWidget(lv, 0, 0)
+        lv.addSpacing(6)
+        lv.addLayout(form)
+        grid.addWidget(card(lv), 0, 0)
 
-        tx = QGroupBox("Market fees")
-        tf = QFormLayout(tx)
+        tx = QVBoxLayout()
+        t2 = QLabel("MARKET FEES")
+        t2.setObjectName("SectionTitle")
+        tx.addWidget(t2)
+        tx.addWidget(muted("Most guides say 10% tax + 2% listing fee; check your in-game market."))
+        tf = QFormLayout()
+        tf.setSpacing(10)
         self.tax_spin = QDoubleSpinBox()
         self.tax_spin.setRange(0, 50)
         self.tax_spin.setSuffix(" %")
+        self.tax_spin.setFixedWidth(110)
         self.tax_spin.setValue(self.settings.tax_pct)
         self.tax_spin.valueChanged.connect(self._fees_changed)
         self.fee_spin = QDoubleSpinBox()
         self.fee_spin.setRange(0, 20)
         self.fee_spin.setSuffix(" %")
+        self.fee_spin.setFixedWidth(110)
         self.fee_spin.setValue(self.settings.fee_pct)
         self.fee_spin.valueChanged.connect(self._fees_changed)
-        tf.addRow("Sales tax (taken when it sells):", self.tax_spin)
-        tf.addRow("Listing fee (paid when you list):", self.fee_spin)
-        grid.addWidget(tx, 0, 1)
+        tf.addRow("Sales tax (when it sells)", self.tax_spin)
+        tf.addRow("Listing fee (when you list)", self.fee_spin)
+        tx.addSpacing(6)
+        tx.addLayout(tf)
+        tx.addStretch(1)
+        grid.addWidget(card(tx), 0, 1)
         outer.addLayout(grid)
 
-        info = QTextBrowser()
-        info.setOpenExternalLinks(True)
+        info = browser()
         info.setHtml(
-            "<h3>How it works</h3>"
-            "<ul>"
-            "<li>Prices come from the public <a href='https://aion2.exchange'>aion2.exchange</a> website (Lumiel "
-            "server). The app only reads that website: it never touches the game, its files or its memory.</li>"
-            "<li>Every Refresh is saved, so the app builds its own price and sales history. The more often you "
-            "refresh (e.g. a few times a day), the better the sales-speed estimates get.</li>"
-            "<li><b>Usual price</b> is the median of the last 72 hours of hourly prices, so one odd listing "
-            "cannot fool it. Items with fewer than 3 listings, or that sit on the market without selling, are "
-            "never used to claim a profit.</li>"
-            "<li><b>Odyle → materials (Substance Morph):</b> every grade of Odyle can be morphed 1:1 into ore, "
-            "gems, logs and plants of the same grade. Morphed materials can't be sold, so the app only uses this "
-            "when Odyle is cheaper than buying the material.</li>"
-            "<li>Also considered: crafting intermediates yourself (ore → ingot → gear) when cheaper than buying, "
-            "alternative ingredients, NPC-shop supplies, the Splendent combo chance, failed crafts eating the "
-            "materials, and buying in bulk (the cheapest listing runs out).</li>"
-            "<li><b>Success rates</b> are estimated from your level using community measurements of the game's "
-            "probability tab. If the game shows a different number for a recipe, type it in on the Crafting tab.</li>"
-            "<li><b>Profit per day</b> is the main ranking: an item that sells in hours lets you re-use the "
-            "kinah, so a small margin that sells fast can beat a big margin that sits for a week.</li>"
-            "</ul>"
-            f"<p><small>Data folder: {esc(self.engine.data_dir)} · Recipes: gamers4.life crafting database"
-            "</small></p>")
+            "<h2>How it works</h2>"
+            "<p>Prices come from the public <a href='https://aion2.exchange'>aion2.exchange</a> website (Lumiel). "
+            "The app only reads that website — it never touches the game, its files or its memory.</p>"
+            "<p><span class='gold'>Your own history.</span> Every Refresh is saved, so the app builds its own price "
+            "and sales history. Refresh a few times a day and the sales-speed estimates keep getting better.</p>"
+            "<p><span class='gold'>Usual price</span> is the median of the last 72 hours, so one odd listing can't "
+            "fool it. Items with fewer than 3 listings, or that sit on the market without selling, are never used "
+            "to claim a profit.</p>"
+            "<p><span class='gold'>Odyle → materials.</span> Every Odyle grade morphs 1:1 into ore, gems, logs and "
+            "plants of the same grade. Morphed materials can't be sold, so the app uses this only when Odyle is "
+            "cheaper.</p>"
+            "<p><span class='gold'>Also counted:</span> crafting intermediates yourself when cheaper, alternative "
+            "ingredients, NPC supplies, the Splendent combo chance, failed crafts eating materials, and bulk prices "
+            "when the cheapest listing runs out.</p>"
+            "<p><span class='gold'>Profit per day</span> is the main ranking: kinah that comes back in hours can be "
+            "spent again, so a small margin that sells fast can beat a big one that sits for a week.</p>"
+            f"<p class='muted'>Data folder: {esc(self.engine.data_dir)} · Recipes: gamers4.life crafting database</p>")
         outer.addWidget(info, 1)
         return w
 
@@ -666,14 +956,29 @@ class MainWindow(QMainWindow):
     def _update_banner(self):
         msgs = []
         if not any(self.settings.levels.values()):
-            msgs.append("Set your crafting levels in the Settings tab to see crafting opportunities.")
+            msgs.append("Set your crafting levels in Settings to see crafting opportunities.")
         if self.analysis:
             msgs.extend(self.analysis.data.warnings)
             if self.analysis.data.snapshot_count < 3:
                 msgs.append("Few refreshes saved yet: sales-speed estimates get better each time you press Refresh "
                             "(a few times a day is ideal).")
-        self.banner.setText("\n".join(msgs))
+        self.banner.setText("ⓘ  " + "\nⓘ  ".join(msgs) if msgs else "")
         self.banner.setVisible(bool(msgs))
+
+    def _update_kpis(self):
+        a = self.analysis
+        if not a:
+            for k in (self.kpi_best, self.kpi_safe, self.kpi_fast, self.kpi_items):
+                k.set("—", "press Refresh")
+            return
+        ops = a.ops
+        best = max(ops, key=lambda o: o.profit_day, default=None)
+        self.kpi_best.set("+" + short(best.profit_day) if best else "—", best.name if best else "nothing profitable")
+        safe = [o for o in ops if o.risk == "Safe"]
+        self.kpi_safe.set(str(len(safe)), f"of {len(ops)} opportunities")
+        fast = [o for o in ops if o.fast]
+        self.kpi_fast.set(str(len(fast)), "sell within a day")
+        self.kpi_items.set(f"{len(a.stats):,}", f"{a.data.snapshot_count} refresh{'' if a.data.snapshot_count == 1 else 'es'} saved")
 
     # ── refresh / recalc ─────────────────────────────────────────────────
 
@@ -681,9 +986,10 @@ class MainWindow(QMainWindow):
         if self._thread is not None:
             return
         self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setText("  Refreshing…")
         self.progress.setValue(0)
         self.progress.show()
-        self.status.setText("Refreshing…")
+        self._set_status("Refreshing…", theme.VIOLET)
         self._thread = QThread(self)
         self._worker = RefreshWorker(self.engine, copy.deepcopy(self.settings))
         self._worker.moveToThread(self._thread)
@@ -701,7 +1007,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str, float)
     def _on_progress(self, msg, frac):
-        self.status.setText(msg)
+        self._set_status(msg, theme.VIOLET)
         self.progress.setValue(int(frac * 100))
 
     @Slot(object)
@@ -709,17 +1015,21 @@ class MainWindow(QMainWindow):
         self.analysis = analysis
         self.recalculate(reuse=True)
         when = time.strftime("%H:%M", time.localtime(analysis.data.fetched_at))
-        self.status.setText(("Offline copy from " if analysis.data.offline else "Updated ") + when)
+        if analysis.data.offline:
+            self._set_status("Offline copy from " + when, theme.AMBER)
+        else:
+            self._set_status("Updated " + when, theme.GREEN)
 
     @Slot(str)
     def _on_failed(self, msg):
-        self.status.setText("Refresh failed")
+        self._set_status("Refresh failed", theme.RED)
         QMessageBox.warning(self, "Refresh failed", msg)
 
     @Slot()
     def _thread_done(self):
         self.progress.hide()
         self.refresh_btn.setEnabled(True)
+        self.refresh_btn.setText("  Refresh")
         self._thread.deleteLater()
         self._thread = None
         self._worker = None
@@ -755,6 +1065,7 @@ class MainWindow(QMainWindow):
             if n_levels else "Set your crafting levels in Settings to see recipes.")
         self._update_plan()
         self._update_banner()
+        self._update_kpis()
 
     def closeEvent(self, event):
         if self._thread is not None:

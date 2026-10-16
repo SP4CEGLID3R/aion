@@ -14,7 +14,10 @@ from aion_income.gui.widgets import parse_kinah  # noqa: E402
 
 @pytest.fixture(scope="module")
 def app():
-    return QApplication.instance() or QApplication([])
+    from aion_income.gui.theme import apply_theme
+    a = QApplication.instance() or QApplication([])
+    apply_theme(a)
+    return a
 
 
 def wait_refresh(app, win, timeout=60):
@@ -107,10 +110,12 @@ def test_window_end_to_end(app, engine, settings, fake, tmp_path):
         for lv in win.level_spins.values():
             lv.setValue(60)
         win.recalculate()
+        win.resize(1440, 900)
         for i, name in enumerate(["best", "plan", "craft", "market", "settings"]):
             win.tabs.setCurrentIndex(i)
-            if i == 0:
-                win.best_view.selectRow(0)
+            for view in (win.best_view, win.plan_view, win.craft_view, win.market_view):
+                if view.model().rowCount():
+                    view.selectRow(0)
             app.processEvents()
             win.grab().save(os.path.join(out, f"{name}.png"))
     win.close()
