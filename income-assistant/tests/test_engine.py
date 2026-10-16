@@ -118,10 +118,12 @@ def test_settings_roundtrip_and_bad_file(tmp_path):
     s.budget = 12e6
     s.play_hours = 5.5
     s.server_region = "NAW"
+    s.max_share = 0.5
     s.save(str(p))
     t = Settings.load(str(p))
     assert t.levels["alchemy"] == 77 and t.overrides == {"123": 88.5} and t.budget == 12e6
-    assert t.play_hours == 5.5 and t.server_region == "NAW"
+    assert t.play_hours == 5.5 and t.server_region == "NAW" and t.max_share == 0.5
+    assert Settings().max_share == 0.35
     assert Settings().server_region == "EU"
     p.write_text("{broken")
     assert Settings.load(str(p)).levels["alchemy"] == 0

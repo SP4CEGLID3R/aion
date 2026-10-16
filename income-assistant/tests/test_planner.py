@@ -128,7 +128,10 @@ def test_learned_rules_thin_margins_and_avoid_warnings_are_risky():
 def test_plan_caps_each_item_and_stocks_a_few_days():
     a = op("a", 1000, 400, per_day=1000)       # could absorb far more than the budget
     b = op("b", 1000, 300, per_day=1000)
+    from aion_income.planner import MAX_SHARE
     p = make_plan([a, b], 1_000_000, horizon=3)
+    assert all(l.capital <= MAX_SHARE * 1_000_000 + 1e-6 for l in p.lines)
+    p = make_plan([a, b], 1_000_000, horizon=3, max_share=0.15)    # the Settings option
     assert all(l.capital <= 0.15 * 1_000_000 + 1e-6 for l in p.lines)
     small = op("c", 1000, 400, per_day=10)
     p3 = make_plan([small], 1e9, horizon=3)
@@ -145,7 +148,7 @@ def test_realistic_roi_curve():
 def test_million_run_rules():
     from aion_income.opportunities import MIN_PRED_ROI
     from aion_income.planner import MAX_SHARE, MAX_STOCK_DAYS
-    assert MIN_PRED_ROI == 0.20 and MAX_SHARE == 0.15 and MAX_STOCK_DAYS == 10
+    assert MIN_PRED_ROI == 0.20 and MAX_SHARE == 0.35 and MAX_STOCK_DAYS == 10
     st = ItemStats(key="k", name="X", ask=1000, listings=40, ref=1400, ref_basis="t", history_points=48,
                    sales_per_day=30, sales_hours=24, volatility=0.05, pessimistic=600, trend_short=0.0, reversion=1.0)
     o = resell_opportunity(st, 0.88)       # +23% predicted but loses money at the recent low

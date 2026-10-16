@@ -124,7 +124,7 @@ random/real-order replay × 347 runs = **999,360 simulated 50-day runs, starting
 |---|---|---|---|
 | Days of stock bought at once | 2 d → 77M · 3 → 83M · 5 → 90M · 7 → 94M (search average); 10 days beat 7 in a follow-up | 7 → 102M, 10 → 107M | **up to 10 days while prices hold, fewer when they fall** (see below) |
 | Minimum predicted return | 10% ≈ 20% > 35%; every top strategy used 20% | 20% best | **+20%**, thinner trades are Risky |
-| Most budget in one item | 25% grew ~4% more on average, but on Kaisinel in real order 15% had the better bad-luck results | 15% clearly better bad-luck results | **15%** |
+| Most budget in one item | 25% grew ~4% more on average over 50 days (the later 30-day search favoured 35%, see below) | 15% clearly better bad-luck results | **35%** since the final search |
 | "Loses money if the price falls to its recent low" | made −8% | made −2% | **Risky** |
 | Skipping combo-luck trades | **−16M** | −8M | kept, **Moderate** (never Safe) |
 | Skipping swingy trades | −7M | −8M | kept |
@@ -141,18 +141,33 @@ below; it had been understated ~2.5×) and how combo procs are valued:
 
 | | Median | 10–90% of runs | Runs below 30M |
 |---|---|---|---|
-| **EU, shipped default** | **120M (+1.8M/day)** | **97–160M** | **0%** |
-| · Kaisinel (real sales) | 131M (+2.0M/day) | 99–186M | 0% |
-| · Zikel (borrowed volumes) | 115M | 96–134M | 0% |
-| · Kaisinel if you win only half the buyers assumed | 83M (+1.1M/day) | 63–110M | 0% |
-| NA, same shipped default | 175M | 108–292M | 0% |
+| **EU, shipped default** | **129M (+2.0M/day)** | **101–177M** | **0%** |
+| · Kaisinel (real sales) | 141M (+2.2M/day) | 100–201M | 0% |
+| · Zikel (borrowed volumes) | 127M | 103–153M | 0% |
+| · Kaisinel if you win only half the buyers assumed | 89M (+1.2M/day) | 62–127M | 0% |
+| NA, same shipped default | 233M | 128–495M | 0% |
 
-**On Lumiel, plan for +50M to +100M on 30M over 50 days** (the half-buyers and the
+**On Lumiel, plan for +60M to +110M on 30M over 50 days** (the half-buyers and the
 full Kaisinel rows). The app assumes you win 30% of an item's buyers as one more
 seller; nobody can measure that yet, so the lower row is the cautious case. From
-15M, a typical first week ended around 26.5M (about 9M of it cash, the rest stock
-still listed). The game is new and prices are hard to predict, so refresh often:
+15M, a typical first week ended around 27M (about 6–11M of it cash, the rest stock
+still listed; 6% of Kaisinel weeks were below 15M on paper, so don't judge week one). The game is new and prices are hard to predict, so refresh often:
 the app keeps re-learning from your own history.
+
+**The final 501,120-run search (30-day paths, max income first).** 108 strategies × 20 setups
+(Kaisinel, Zikel and three NA servers × crafting level 60/100 × random/real-order replay) × 232
+runs of 30 days from 30M at 8 h/day, each also tallying which kinds of trades paid:
+
+| Setting | Effect (EU typical after 30 days) | Built in |
+|---|---|---|
+| Most budget in one item | 15% → 84M · 25% → 88M · **35% → 89M** · 50% → 89M · 100% → 89M; on Kaisinel (real sales) nothing past 25–35% and worse bad luck | **35%**, changeable in Settings |
+| Days of stock | 7 → 80M · **10 → 83M** | 10 (adaptive) |
+| Trades allowed | Safe+Moderate 84M · +thin-margin Risky 84M · everything 77M | Safe+Moderate |
+| Consumables | made −39% / +5% / +3% / +81% where +64% / +99% / +59% / +137% was predicted | realistic return ×0.4 |
+
+Head-to-head, 50,000 more runs: EU typical 84.0M → **87.9M**, median 81.7M → **86.5M**; Kaisinel
+88.3M → 90.0M; Zikel 79.9M → 86.0M; NA 108M → 134M; better in 19 of 20 setups. The price is a
+little more swing: on Kaisinel the worst 10% went 60.0M → 58.1M and losing runs 0.1% → 0.7%.
 
 **What 50,000 more runs (30-day paths, Splendents included) changed.** 3,600 runs
 recorded 277,491 trades with what kind of trade each was. Kept only what held on both

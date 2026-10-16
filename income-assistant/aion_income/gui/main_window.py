@@ -568,7 +568,7 @@ class MainWindow(QMainWindow):
         out.append(f"<p class='muted'>Realistic numbers above. The raw prediction is {kinah(o.profit_unit, True)} per item "
                    f"({pct(o.roi, True)}); in simulations on EU servers' real prices, trades predicted like this "
                    f"made about {pct(o.real_roi, True)}. New-game prices are hard to predict, so the plan spreads "
-                   f"your kinah (max 15% per item).</p>")
+                   f"your kinah (max {self.settings.max_share:.0%} per item, set in Settings).</p>")
         if o.good:
             out.append("<p class='green'>✔ " + "<br>✔ ".join(esc(g) for g in o.good) + "</p>")
         return "".join(out)
@@ -700,7 +700,7 @@ class MainWindow(QMainWindow):
         ops = self.plan_ops()
         drift = self.analysis.data.calibration.get("drift") if self.analysis else None
         p, stock_days, trend = make_adaptive_plan(ops, self.settings.budget, self.settings.horizon,
-                                                  self.settings.play_hours, drift)
+                                                  self.settings.play_hours, drift, self.settings.max_share)
         self.current_plan, self.stock_days = p, stock_days
         if stock_days < stock_days_for(trend) and stock_days >= self.settings.horizon:
             stock_note = f" Buying at most {stock_days:g} days of stock, as set by Sell within."
@@ -733,7 +733,8 @@ class MainWindow(QMainWindow):
                 f"{self.horizon_box.currentText()} (≈ {kinah(p.profit_per_day)}/day). Keep {kinah(p.leftover)} spare"
                 + (" — with 10 listing slots, ~5 min per listing and your playing time, the market can't take more."
                    if p.leftover > 0.2 * p.budget else ".") + stock_note)
-        tiers = holding_tiers(ops, self.settings.horizon, self.settings.play_hours, stock_days) if ops else []
+        tiers = (holding_tiers(ops, self.settings.horizon, self.settings.play_hours, stock_days, self.settings.max_share)
+                 if ops else [])
         for lab, name in zip(self.tier_labels, ("Low", "Mid", "High")):
             t = next((t for t in tiers if t.label == name), None)
             color = theme.GOLD if name == "Mid" else theme.TEXT
@@ -1255,6 +1256,15 @@ class MainWindow(QMainWindow):
         self.hours_spin.setToolTip("Each listing takes ~5 min and only 10 can be up at once, so your time limits sales")
         self.hours_spin.valueChanged.connect(self._hours_changed)
         tf.addRow("Hours you play per day", self.hours_spin)
+        self.share_spin = QSpinBox()
+        self.share_spin.setRange(5, 100)
+        self.share_spin.setSuffix(" %")
+        self.share_spin.setFixedWidth(110)
+        self.share_spin.setValue(int(round(self.settings.max_share * 100)))
+        self.share_spin.setToolTip("Most of your budget the plan puts into one item. 35% earned the most in 501,120 "
+                                   "simulated runs; up to 50% can earn a bit more but has worse bad-luck results.")
+        self.share_spin.valueChanged.connect(self._share_changed)
+        tf.addRow("Most budget in one item", self.share_spin)
         from ..engine import REGIONS
         self.server_edit = QLineEdit(self.settings.server_name)
         self.server_edit.setFixedWidth(140)
@@ -1315,6 +1325,11 @@ class MainWindow(QMainWindow):
 
     def _hours_changed(self):
         self.settings.play_hours = self.hours_spin.value()
+        self._save_settings()
+        self._update_plan()
+
+    def _share_changed(self):
+        self.settings.max_share = self.share_spin.value() / 100.0
         self._save_settings()
         self._update_plan()
 

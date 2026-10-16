@@ -46,6 +46,7 @@ class Settings:
     budget: float = 5_000_000
     horizon: float = 10.0  # learned: a 10-day plan (up to 10 days of stock) earned most in EU and NA simulations
     play_hours: float = 8.0
+    max_share: float = 0.35  # most of the budget the plan puts into one item (learned: 35%)
     risks: list = field(default_factory=lambda: ["Safe", "Moderate"])
     server_name: str = "Lumiel"
     server_region: str = "EU"
@@ -78,6 +79,8 @@ class Settings:
             s.horizon = num("horizon", 0, 1e9)
         if num("play_hours", 0.5, 24) is not None:
             s.play_hours = num("play_hours", 0.5, 24)
+        if num("max_share", 0.05, 1.0) is not None:
+            s.max_share = num("max_share", 0.05, 1.0)
         if isinstance(raw.get("levels"), dict):
             for p in PROFESSIONS:
                 v = raw["levels"].get(p)
@@ -101,7 +104,7 @@ class Settings:
             json.dump({"levels": self.levels, "tax_pct": self.tax_pct, "fee_pct": self.fee_pct,
                        "overrides": self.overrides, "budget": self.budget,
                        "supply_requests": supply_mod.to_json(self.supply_requests), "horizon": self.horizon,
-                       "play_hours": self.play_hours,
+                       "play_hours": self.play_hours, "max_share": self.max_share,
                        "risks": self.risks, "server_name": self.server_name,
                        "server_region": self.server_region}, f, indent=1)
         os.replace(tmp, path)

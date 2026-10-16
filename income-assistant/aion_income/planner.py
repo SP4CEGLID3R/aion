@@ -13,8 +13,10 @@ from .opportunities import LISTING_SLOTS, Opportunity, op_realistic, realistic_r
 
 # Defaults learned from simulated 50-day runs on EU and NA servers (see tools/simulate.py); both
 # regions agreed on these:
-MAX_SHARE = 0.15     # at most 15% of the budget in one item: 20-25% grew a little faster on average
-                     # but had worse bad-luck results on Kaisinel (EU, real sales) and on NA
+MAX_SHARE = 0.35     # at most 35% of the budget in one item (Settings can change it). In 501,120
+                     # 30-day runs this was the biggest lever: 15% -> 84M, 25% -> 88M, 35% -> 89M on EU
+                     # from 30M; past 35% Kaisinel (the server with real sales) gained nothing and its
+                     # bad-luck results got worse
 MAX_STOCK_DAYS = 10  # buy up to 10 days of sales when a good trade is there: good trades don't show up
                      # every day but you can sell every day, and the 10 listing slots stay full
                      # (EU: 2 days -> 52M, 7 -> 78M, 10 -> 81M; NA: 7 -> 102M, 10 -> 107M) ...
@@ -168,15 +170,15 @@ def make_plan(ops: list[Opportunity], budget: float, horizon: float = 3.0, limit
 
 
 def make_adaptive_plan(ops: list[Opportunity], budget: float, horizon: float = 10.0, play_hours: float = 8.0,
-                       market_drift: float | None = None):
+                       market_drift: float | None = None, max_share: float = MAX_SHARE):
     """make_plan with the stock length set by how the chosen items' prices are moving.
     Returns (plan, stock days, daily trend or None)."""
-    first = make_plan(ops, budget, horizon, play_hours=play_hours)
+    first = make_plan(ops, budget, horizon, play_hours=play_hours, max_share=max_share)
     trend = items_trend([l.op for l in first.lines], market_drift, [l.capital for l in first.lines])
     days = min(max(horizon, 1.0), stock_days_for(trend), MAX_STOCK_DAYS)
     if days >= min(max(horizon, 1.0), MAX_STOCK_DAYS):
         return first, days, trend
-    return make_plan(ops, budget, horizon, play_hours=play_hours, batch_days=days), days, trend
+    return make_plan(ops, budget, horizon, play_hours=play_hours, batch_days=days, max_share=max_share), days, trend
 
 
 @dataclass
@@ -191,14 +193,15 @@ TIERS = (("Low", 0.5, 5e6), ("Mid", 0.8, 15e6), ("High", 0.95, HOLD_CAP))
 
 
 def holding_tiers(ops: list[Opportunity], horizon: float = 3.0, play_hours: float = 8.0,
-                  batch_days: float | None = None) -> list[HoldTier]:
+                  batch_days: float | None = None, max_share: float = MAX_SHARE) -> list[HoldTier]:
     """Low / mid / high amounts worth holding, from where extra kinah stops paying.
 
     Each tier is the smallest amount that earns its share (50% / 80% / 95%) of what
     30 million could earn, but never more than 5M / 15M / 30M: holding more than
     that is unrealistic for most players.
     """
-    curve = [(b, make_plan(ops, b, horizon, play_hours=play_hours, batch_days=batch_days).profit_per_day) for b in GRID]
+    curve = [(b, make_plan(ops, b, horizon, play_hours=play_hours, batch_days=batch_days,
+                           max_share=max_share).profit_per_day) for b in GRID]
     best = max(p for _, p in curve)  # a bigger budget doesn't always earn more
     if best <= 0:
         return []

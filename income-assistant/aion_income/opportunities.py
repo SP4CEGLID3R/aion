@@ -38,8 +38,10 @@ def realistic_roi(pred_roi: float, calibration=CALIBRATION) -> float:
 #    expected: that use is counted at a quarter of its estimated value
 #  - crafts needing a Splendent base made through combo procs realised ~60% of the estimate
 #  - big price swings (over ±35%) ~74%, weapons ~75%
+#  - consumables (potions, scrolls, food): in 501,120 more runs they made -39% / +5% / +3% / +81%
+#    where +64% / +99% / +59% / +137% was predicted on the four servers that trade them -> ~40%
 UPGRADE_KEEP = 0.25
-FORMULA_FACTORS = {"combo_base": 0.6, "swings": 0.74, "weapons": 0.75}
+FORMULA_FACTORS = {"combo_base": 0.6, "swings": 0.74, "weapons": 0.75, "consumables": 0.4}
 
 
 def formula_roi(op) -> float:
@@ -57,6 +59,8 @@ def formula_roi(op) -> float:
         v *= FORMULA_FACTORS["swings"]
     if st and st.section == "weapons":
         v *= FORMULA_FACTORS["weapons"]
+    if st and st.section == "consumables":
+        v *= FORMULA_FACTORS["consumables"]
     return v
 
 
