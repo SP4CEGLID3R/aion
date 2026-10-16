@@ -161,13 +161,16 @@ def _supply_notes(st: ItemStats, reasons: list, good: list):
         good.append(f"needed for a {st.supply_kind.lower()} supply request: extra buyers for {left / 24:.1f} more days")
 
 
-# Learned from ~40,000 simulated trades on five servers' real price history:
-#  - "loses money if the price falls to its recent low" and "only profitable when the
-#    Splendent combo hits" really lost money or barely broke even -> Risky
-#  - predicted returns under ~10% lost money -> Risky
-#  - big price swings, falling prices and failed-craft risk still paid on average -> not Risky alone
-AVOID = ("loses money if the price falls", "only profitable when the Splendent combo hits")
-MIN_PRED_ROI = 0.10
+# Learned from 1,002,240 simulated 50-day runs (432 strategies x 5 servers x 2 crafting levels x
+# 2 replay modes), with the winner picked on four servers and checked on the fifth:
+#  - trades predicted under +20% are not worth a listing slot -> Risky
+#  - "loses money if the price falls to its recent low" made ~+1% for a predicted ~+25% -> Risky
+#  - "only profitable when the Splendent combo hits" swings more but really made ~+33% once the
+#    +20% bar is met -> Moderate (never Safe)
+#  - big price swings, falling prices and failed-craft risk alone don't make a trade worse
+AVOID = ("loses money if the price falls",)
+SWINGY = ("only profitable when the Splendent combo hits",)
+MIN_PRED_ROI = 0.20
 SAFE_REAL_ROI = 0.15
 
 
@@ -184,7 +187,7 @@ def classify(op: Opportunity, st: ItemStats, extra_risky: list, extra_safe_ok: b
     if st.history_points < MIN_HISTORY_POINTS and not st.units_sold_28d:
         reasons.append("little price history")
     if op.roi < MIN_PRED_ROI:
-        reasons.append(f"thin margin (+{op.roi:.0%} predicted): trades like this lost money in simulations")
+        reasons.append(f"thin margin (+{op.roi:.0%} predicted): under +20% wasn't worth a listing slot in simulations")
     reasons.extend(extra_risky)
 
     hard = (st.sales_per_day is None or (op.sell_days or 99) > 7 or op.roi < MIN_PRED_ROI
@@ -192,7 +195,8 @@ def classify(op: Opportunity, st: ItemStats, extra_risky: list, extra_safe_ok: b
     if hard:
         op.risk = RISKY
         return
-    safe = (op.real_roi >= SAFE_REAL_ROI and (st.sales_per_day or 0) >= 2
+    swingy = any(a in r for r in reasons for a in SWINGY)
+    safe = (not swingy and op.real_roi >= SAFE_REAL_ROI and (st.sales_per_day or 0) >= 2
             and (st.history_points >= 24 or st.units_sold_28d > 0)
             and st.listings >= 5 and extra_safe_ok and (op.sell_days or 99) <= 3)
     if safe:

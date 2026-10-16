@@ -77,7 +77,7 @@ because those buyers disappear when the request ends.
   price is expected to keep falling. Without enough history it assumes only 30%
   of a dip recovers.
 
-## What 20,000 simulations taught it
+## What 1,000,000 simulations taught it
 
 `tools/simulate.py` follows the app's plan every day: real prices replayed (in random
 day order and in real order), craft success and Splendent combos rolled, buyers
@@ -86,48 +86,52 @@ It was run on the real price history of five servers (Siel, Nezekan, Kaisinel,
 Israphel, Zikel; 6–16 Oct 2026). Kaisinel publishes real sales; the others borrow
 Kaisinel's sales volumes.
 
-![20,000 runs](docs/study20k.png)
+![1,000,000 runs](docs/million.png)
 
-**First: 50 setups (5 servers × 10 strategies), ~40,000 logged trades.**
+**The search:** 432 strategies × 5 servers × crafting level 60/100 × random/real-order
+replay × 116 runs each = **1,002,240 simulated 50-day runs, starting with 30M, 8 h/day**.
+Strategies were ranked by long-run growth (average log of the final kinah, which
+punishes big losses). The winner was picked on four servers and checked on the fifth.
+The same strategy won every time, placing 1st–24th of 432 on the server it hadn't seen.
 
-* Predicted returns were about 2.5× too high, but in the right order. Trades predicted
-  under 10% lost money; trades predicted 50% made about 30%. The app now shows a
-  **realistic** return (`0.95·ln(1+predicted) − 0.07`), fitted on four servers and
-  checked on the fifth.
-* Only two warnings really predicted losses: *loses money if the price falls to its
-  recent low* and *only profitable when the Splendent combo hits*. Those, and thin
-  margins, are now **Risky**. Big price swings alone no longer are; those trades
-  still paid.
-* Buying cheap listings to resell rarely worked: on this data, dips seldom
-  recovered within a day.
+What each setting did on average:
 
-**Then: rules picked on four servers and tested on the fifth.**
+| Setting | Effect |
+|---|---|
+| Days of stock bought at once | 2 days → 58M · 3 → 64M · 5 → 69M · **7 → 73M** (the biggest lever) |
+| Minimum predicted return | 10% → 66M · **20% → 67M** · 35% → 65M |
+| Most budget in one item | 8% safest · **15% nearly the best growth with better bad-luck results** · 25% highest growth but bigger dips |
+| Swingy-but-profitable trades | allowing them: **+8M** |
+| Skipping falling prices | **−9M** (falling prices aren't a reason to skip) |
+| Crafting only vs crafting + resells | about the same; crafting does almost all the work |
 
-* Ranking by realistic profit and **putting at most 15% of the budget into one
-  item** removed nearly all losing runs.
-* **Holding several days of stock** was the biggest gain: good chances don't come
-  every day, but you can sell every day. That held in real-day order too, with
-  prices falling ~3%/day. The default plan is now **7 days, with up to 5 days of
-  stock**.
+Built into the app as the default:
 
-**Finally: 20,000 runs starting with 30M, 8 h/day.**
+* **Only trades predicted at +20% or more**; thinner ones are Risky.
+* **"Loses money if the price falls to its recent low" is Risky.** In 103,608 trades
+  it made about +1% for a predicted ~+25%; dropping it raised the median 4.6M.
+* **Combo-luck trades are Moderate.** They swing more but really made about +33%.
+* **At most 15% of the budget per item, and up to a week of stock** (the 7-day plan).
+
+Results with 30M:
 
 | Plan | Median after 50 days | 10–90% of runs | Runs below 30M |
 |---|---|---|---|
-| Previous version | 56M (+0.52M/day) | 45–65M | 4% |
-| New, 3-day plan | 66M (+0.72M/day) | 58–77M | 0% |
-| **New, 7-day plan (default)** | **73M (+0.86M/day)** | **62–88M** | **0%** |
-| New + Risky | 82M (+1.05M/day) | 52–122M | 0%, but dips of ~34% |
+| Previous default | 74M (+0.88M/day) | 62–86M | 0% |
+| **Shipped default** | **102M (+1.44M/day)** | **70–136M** | **0%** |
 
-The app's realistic return was close to what trades really made, within about 15
-percentage points in each band. The volume engine is crafting materials (wood,
-leather, paper, powder); the best returns came from crafted armour.
+The app's realistic return matches what trades really made: crafts were predicted
+at +39% realistic and made +38.5%. Crafted armour and crafting materials (leather,
+wood, paper) bring in most of the profit.
 
-**Be careful with these numbers.** On Kaisinel, the one server with its own real
-sales data, the 7-day plan made only about +10M on 30M. On the other servers, where
-sales volumes are borrowed, it made +35–60M. Lumiel will probably land in between.
-The game is new and prices are hard to predict, so refresh often: the app keeps
-re-learning from your own history.
+**Expect paper dips.** About half your net worth sits in stock, valued at its low-end
+price until it sells. 60% of runs had a dip of 25%+ at some point, mostly around
+day 30–35, and still ended well up. Don't panic-sell stock in a dip.
+
+**Be careful with these numbers.** On Kaisinel, the one server with real sales data,
+the shipped default made about **+25M on 30M (55M)**. On the borrowed-volume servers
+it made +50–85M. Lumiel will probably land in between. The game is new and prices
+are hard to predict, so refresh often: the app keeps re-learning from your own history.
 
 **Weekly supply-request cycle.** On all five servers, crafted items had their biggest
 share of market activity the day after the weekly reset (Wednesday). Crafted items
