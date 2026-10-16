@@ -21,10 +21,18 @@ memory or its network traffic.
 
 ## Get it
 
-* **Ready-made .exe**: the *Income Assistant* GitHub Actions workflow builds
-  `Aion2IncomeAssistant.exe` on Windows (tests run first). Download it from the
-  run's *Artifacts* section and double-click it. Nothing to install.
-* **From source**: install Python 3.12 from python.org, then double-click
+* **Public download link:** once a release is published (see below), anyone can
+  download the app from
+  [Aion2IncomeAssistant.exe](https://github.com/SP4CEGLID3R/aion/releases/latest/download/Aion2IncomeAssistant.exe)
+  without a GitHub account. Double-click it; nothing to install. Windows may warn
+  that the app isn't code-signed: click **More info → Run anyway**.
+* **Publishing a release:** on GitHub open *Releases → Draft a new release*, type a
+  new tag like `income-v1.0.0` (target: this branch), and publish. The *Income
+  Assistant* workflow then runs the tests on Windows, builds the .exe and attaches
+  it to that release automatically.
+* **Latest build without a release:** the *Income Assistant* workflow run's
+  *Artifacts* (needs a GitHub login; expires after 90 days).
+* **From source:** install Python 3.12 from python.org, then double-click
   `run.bat` (it sets everything up the first time). `build_exe.bat` builds the
   .exe yourself.
 
