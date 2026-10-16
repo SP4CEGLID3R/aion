@@ -1,0 +1,48 @@
+name: Income Assistant
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths: ["income-assistant/**", ".github/workflows/income-assistant.yml"]
+  pull_request:
+    paths: ["income-assistant/**", ".github/workflows/income-assistant.yml"]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: income-assistant
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Qt runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pyflakes aion_income tests
+      - run: python -m pytest -q tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: Tests on Windows
+        run: python -m pytest -q tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - run: pyinstaller --noconfirm Aion2IncomeAssistant.spec
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Aion2IncomeAssistant-windows
+          path: income-assistant/dist/Aion2IncomeAssistant.exe
+          if-no-files-found: error

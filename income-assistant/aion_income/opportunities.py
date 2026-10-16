@@ -1,0 +1,196 @@
+"""Every way to make kinah, scored the same way so they can be compared.
+
+Methods:
+  Craft   - buy (or morph / NPC-buy / sub-craft) the inputs, craft, sell the result
+  Resell  - buy listings that sit well below the item's usual price and sell them
+            again in small lots at the usual price as buyers come
+
+Speed matters as much as margin: kinah that comes back in a day can be spent
+again, so the main ranking is profit per day, not profit per item.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+
+from .crafting import CraftContext, CraftResult, batch_loss_probability
+from .pricing import MIN_HISTORY_POINTS, ItemStats
+
+SAFE, MODERATE, RISKY = "Safe", "Moderate", "Risky"
+RISK_ORDER = {SAFE: 0, MODERATE: 1, RISKY: 2}
+
+MARKET_SHARE = 0.3      # share of an item's daily sales you can expect to win as one more seller
+MIN_MARGIN = 0.03       # ignore resells under 3% net margin
+FAST_DAYS = 1.0         # "fast seller": a day's batch sells within this many days
+
+
+@dataclass
+class Opportunity:
+    method: str
+    name: str
+    key: str
+    cost_unit: float            # kinah you spend per unit (per craft attempt for crafts)
+    revenue_unit: float         # expected kinah back per unit, after tax and listing fee
+    profit_unit: float
+    profit_pess_unit: float     # if prices dip to the low end of their history
+    market_per_day: float | None  # how many the whole market buys per day
+    your_per_day: float         # units (attempts) you can expect to turn over per day
+    sell_price: float           # price to list at
+    buy_price: float | None
+    risk: str = MODERATE
+    reasons: list = field(default_factory=list)
+    good: list = field(default_factory=list)
+    craft: CraftResult | None = None
+    stats: ItemStats | None = None
+
+    @property
+    def roi(self) -> float:
+        return self.profit_unit / self.cost_unit if self.cost_unit > 0 else 0.0
+
+    @property
+    def profit_day(self) -> float:
+        return self.profit_unit * self.your_per_day
+
+    @property
+    def batch(self) -> int:
+        """Units to buy now: about one day of what you can sell."""
+        return max(1, int(math.floor(self.your_per_day)))
+
+    @property
+    def sell_days(self) -> float | None:
+        """Days until a one-day batch has sold (at least the wait for the first buyer)."""
+        if self.your_per_day <= 0:
+            return None
+        return self.batch / self.your_per_day
+
+    @property
+    def fast(self) -> bool:
+        return self.sell_days is not None and self.sell_days <= FAST_DAYS
+
+    @property
+    def capital(self) -> float:
+        return self.cost_unit * self.batch
+
+
+def speed_text(days: float | None) -> str:
+    if days is None:
+        return "unknown"
+    hours = days * 24
+    if hours < 1:
+        return "< 1 hour"
+    if hours < 24:
+        return f"~{hours:.0f} h"
+    return f"~{days:.1f} days"
+
+
+def _sales_reasons(st: ItemStats, reasons: list, good: list):
+    if st.sales_per_day is None:
+        reasons.append("no sales evidence yet (refresh a few times to build history)")
+    elif st.sales_basis.startswith("market sales"):
+        good.append(f"real sales data: ~{st.sales_per_day:.1f}/day")
+    elif st.sales_hours < 3:
+        reasons.append(f"sales rate based on only {st.sales_hours:.0f} h of data")
+
+
+def classify(op: Opportunity, st: ItemStats, extra_risky: list, extra_safe_ok: bool) -> None:
+    reasons, good = op.reasons, op.good
+    _sales_reasons(st, reasons, good)
+    if st.volatility is not None and st.volatility > 0.35:
+        reasons.append(f"price swings ±{st.volatility:.0%}")
+    if op.profit_pess_unit < 0:
+        reasons.append("loses money if the price falls to its recent low")
+    if op.sell_days is not None and op.sell_days > 7:
+        reasons.append(f"slow: {speed_text(op.sell_days)} to sell")
+    if st.history_points < MIN_HISTORY_POINTS and not st.units_sold_28d:
+        reasons.append("little price history")
+    reasons.extend(extra_risky)
+
+    hard = (st.sales_per_day is None or (st.volatility or 0) > 0.35
+            or (op.profit_pess_unit < 0 and op.profit_pess_unit < -0.3 * op.profit_unit)
+            or (op.sell_days or 99) > 7 or bool(extra_risky))
+    if hard:
+        op.risk = RISKY
+        return
+    safe = (op.profit_pess_unit > 0 and (st.sales_per_day or 0) >= 2
+            and st.volatility is not None and st.volatility <= 0.2
+            and (st.history_points >= 24 or st.units_sold_28d > 0)
+            and st.listings >= 5 and extra_safe_ok and (op.sell_days or 99) <= 3)
+    if safe:
+        good.append("stays profitable at the low end of recent prices")
+    op.risk = SAFE if safe else MODERATE
+
+
+def craft_opportunity(res: CraftResult, ctx: CraftContext) -> Opportunity | None:
+    if res.profit <= 0:
+        return None
+    st = ctx.stats[res.out_key]
+    outputs_per_attempt = res.success * res.recipe.out_qty
+    market = st.sales_per_day
+    your_units = (market or 0) * MARKET_SHARE
+    attempts_day = your_units / outputs_per_attempt if outputs_per_attempt > 0 else 0
+    op = Opportunity(
+        method="Craft", name=res.name, key=res.recipe.id, cost_unit=res.cost, revenue_unit=res.ev,
+        profit_unit=res.profit, profit_pess_unit=res.profit_pessimistic, market_per_day=market,
+        your_per_day=attempts_day, sell_price=st.sell_price, buy_price=None, craft=res, stats=st,
+    )
+    risky = []
+    if res.profit_plain_only <= 0:
+        risky.append("only profitable when the Splendent combo hits (luck)")
+    loss10 = batch_loss_probability(res, 10)
+    if loss10 > 0.35:
+        risky.append(f"{loss10:.0%} chance 10 crafts lose money (failures)")
+    for line in res.lines:
+        if line.source.how in ("buy", "bulk"):
+            ist = ctx.stats.get(line.key)
+            if ist and ist.listings < 3 and line.qty > 1:
+                risky.append(f"ingredient {line.name} has only {ist.listings} listing(s)")
+    for n in res.notes:
+        op.reasons.append(n)
+    safe_ok = res.success >= 0.85 and loss10 < 0.1
+    classify(op, st, risky, safe_ok)
+    return op
+
+
+def resell_opportunity(st: ItemStats, keep: float) -> Opportunity | None:
+    if not st.trusted or not st.ask or not st.ref:
+        return None
+    if st.history_points < MIN_HISTORY_POINTS and not (st.units_sold_28d and st.sold_avg):
+        return None  # never guess "usual price" without history
+    target = st.ref
+    buy = st.ask
+    if st.bulk_unit and st.bulk_unit > buy:
+        buy_batch = st.bulk_unit
+    else:
+        buy_batch = buy
+    revenue = target * keep
+    profit = revenue - buy_batch
+    if profit <= buy_batch * MIN_MARGIN:
+        return None
+    pess = (st.pessimistic or target * 0.85) * keep - buy_batch
+    your = (st.sales_per_day or 0) * MARKET_SHARE
+    op = Opportunity(
+        method="Resell", name=st.name, key=st.key, cost_unit=buy_batch, revenue_unit=revenue, profit_unit=profit,
+        profit_pess_unit=pess, market_per_day=st.sales_per_day, your_per_day=your, sell_price=target,
+        buy_price=buy_batch, stats=st,
+    )
+    risky = []
+    if st.trend_7d is not None and st.trend_7d < -0.15:
+        risky.append(f"price falling: {st.trend_7d:+.0%} over 7 days (the dip may be the new normal)")
+    classify(op, st, risky, extra_safe_ok=(st.trend_7d is None or st.trend_7d > -0.05))
+    return op
+
+
+def all_opportunities(ctx: CraftContext, crafts: list[CraftResult]) -> list[Opportunity]:
+    ops = []
+    for res in crafts:
+        op = craft_opportunity(res, ctx)
+        if op:
+            ops.append(op)
+    for st in ctx.stats.values():
+        if st.name and "(Bound)" in st.name:
+            continue
+        op = resell_opportunity(st, ctx.keep)
+        if op:
+            ops.append(op)
+    ops.sort(key=lambda o: o.profit_day, reverse=True)
+    return ops

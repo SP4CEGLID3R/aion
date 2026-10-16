@@ -1,0 +1,37 @@
+{
+  "_note": "NPC shop prices in kinah for bound crafting supplies. Prices marked 'estimated' were not confirmed by a source; edit them if the in-game shop says otherwise.",
+  "prices": {
+    "Abrasive (Bound)": 400,
+    "Catalyst (Bound)": 400,
+    "Glass Bottle (Bound)": 400,
+    "Professional Glass Bottle (Bound)": 1200,
+    "Orichalcum Solvent (Bound)": 400,
+    "Professional Ink (Bound)": 1200,
+    "Exceptional Ink (Bound)": 2400,
+    "Sandpaper (Bound)": 400,
+    "Lesser Dragon Scale Hardener (Bound)": 4650,
+    "Intermediate Dragon Scale Hardener (Bound)": 5600,
+    "Superior Dragon Scale Hardener (Bound)": 6550,
+    "Ultimate Dragon Scale Hardener (Bound)": 7450,
+    "Lesser Dragon Leather Softener (Bound)": 4650,
+    "Intermediate Dragon Leather Softener (Bound)": 5600,
+    "Superior Dragon Leather Softener (Bound)": 6550,
+    "Ultimate Dragon Leather Softener (Bound)": 7450,
+    "Moonstone Hammer (Bound)": 5600,
+    "Elatrite Hammer (Bound)": 7450,
+    "Salt (Bound)": 220,
+    "Sugar (Bound)": 220,
+    "Soy Sauce (Bound)": 220,
+    "Ulmus Oil (Bound)": 220,
+    "Altgard Pepper (Bound)": 220,
+    "Raw Triora Noodles (Bound)": 220,
+    "Curry Powder (Bound)": 220,
+    "Cheese (Bound)": 220,
+    "Abex Butter (Bound)": 220
+  },
+  "estimated": [
+    "Exceptional Ink (Bound)", "Sandpaper (Bound)", "Moonstone Hammer (Bound)", "Elatrite Hammer (Bound)",
+    "Sugar (Bound)", "Soy Sauce (Bound)", "Ulmus Oil (Bound)", "Altgard Pepper (Bound)",
+    "Raw Triora Noodles (Bound)", "Curry Powder (Bound)", "Cheese (Bound)", "Abex Butter (Bound)"
+  ]
+}

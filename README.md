@@ -18,6 +18,9 @@ the game's own). Right: the arrow drawn around your character over the game.*
 
 What's new: [CHANGELOG.md](CHANGELOG.md).
 
+Also in this repository: [Aion 2 Income Assistant](income-assistant/README.md),
+a separate market helper for the Lumiel server.
+
 > [!IMPORTANT]
 > **Live hidden cubes from the game: Verteron and Altgard.**
 > With *Packet capture* (Npcap) the radar reads the game's own traffic
