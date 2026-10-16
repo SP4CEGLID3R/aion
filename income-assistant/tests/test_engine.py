@@ -57,9 +57,10 @@ def test_full_refresh(engine, settings, fake):
     days = [o.real_profit_day for o in a.ops]
     assert days == sorted(days, reverse=True)
     assert all(o.risk in RISK_ORDER for o in a.ops)
-    # never built on low-stock items
+    # low-stock items are shown, but never as anything but Risky
     for o in a.ops:
-        assert o.stats.listings >= 3 or o.stats.units_sold_28d > 0
+        if o.stats.listings < 3 and o.stats.units_sold_28d <= 0:
+            assert o.risk == "Risky" and any("price is a guess" in r for r in o.reasons)
     # Odyle cheaper than the ore -> ore comes from Substance Morph
     src = a.ctx.cheapest_source("610620015")
     assert src.how == "morph"

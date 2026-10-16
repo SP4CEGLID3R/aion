@@ -98,11 +98,36 @@ def test_override_success():
     assert ctx.evaluate(SWORD).success == 0.5
 
 
-def test_unpriced_output_is_skipped():
+def test_thin_or_unpriced_output_is_shown_but_flagged():
+    from aion_income.opportunities import RISKY, craft_opportunity
     st = {"ore": stats("ore", "Pure Orichalcum Ore", 100), "sword": stats("sword", "Orichalcum Longsword", 10_000, listings=1)}
     st["sword"].sales_per_day = None
     ctx = CraftContext(mini_book([SWORD]), st, {"blacksmithing": 3}, "dark", 0.88)
-    assert ctx.evaluate(SWORD) is None  # one listing is no evidence of value
+    res = ctx.evaluate(SWORD)
+    assert res.priced and not res.price_ok         # one listing is no evidence of value...
+    op = craft_opportunity(res, ctx)
+    assert op.risk == RISKY and any("price is a guess" in r for r in op.reasons)   # ...so never above Risky
+    del st["sword"]                                # nobody has ever listed it: cost only, no profit
+    ctx = CraftContext(mini_book([SWORD]), st, {"blacksmithing": 3}, "dark", 0.88)
+    res = ctx.evaluate(SWORD)
+    assert not res.priced and res.profit == 0 and res.avg_cost_item == res.cost / res.success
+    assert craft_opportunity(res, ctx) is None
+
+
+def test_splendent_from_a_combo_is_used_for_the_next_tier_when_worth_more():
+    up = Recipe(id="r2", profession="blacksmithing", faction="dark", level=3, tier="beginner", gold=0,
+                inputs=[("ssword", 1, None), ("ore", 5, None)], out="xsword", out_qty=1, combo_chance=0, combo=None)
+    st = {"ore": stats("ore", "Pure Orichalcum Ore", 100), "sword": stats("sword", "Orichalcum Longsword", 10_000),
+          "xsword": stats("xsword", "Expert's Longsword", 200_000)}   # the Splendent itself never sells
+    ctx = CraftContext(mini_book([SWORD, up]), st, {"blacksmithing": 3}, "dark", 0.88)
+    res = next(c for c in ctx.evaluate_all() if c.out_key == "sword")
+    assert res.combo_best == "craft" and res.combo_sell is None and res.combo_use_name == "Expert's Longsword"
+    assert res.combo_use == pytest.approx((ctx.chance(up) * 200_000 * 0.88 - 500))   # minus 5 ore, failures included
+    assert res.p_combo > 0 and res.profit > res.profit_plain_only
+    st["ssword"] = stats("ssword", "Splendent", 500_000)            # now it sells for more than it's worth as a base
+    ctx = CraftContext(mini_book([SWORD, up]), st, {"blacksmithing": 3}, "dark", 0.88)
+    res = next(c for c in ctx.evaluate_all() if c.out_key == "sword")
+    assert res.combo_best == "sell" and res.combo_sell > res.combo_use
 
 
 def test_unbuyable_input_skips_recipe():

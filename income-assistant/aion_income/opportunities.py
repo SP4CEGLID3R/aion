@@ -170,7 +170,8 @@ def _supply_notes(st: ItemStats, reasons: list, good: list):
 #  - "only profitable when the Splendent combo hits" swings more, but skipping those trades cost
 #    16M in EU and 8M in NA over 50 days -> Moderate (never Safe)
 #  - big price swings, falling prices and failed-craft risk alone don't make a trade worse
-AVOID = ("loses money if the price falls",)
+AVOID = ("loses money if the price falls",
+         "the price is a guess")  # a result with almost no listings and no sales: never rely on it
 SWINGY = ("only profitable when the Splendent combo hits",)
 MIN_PRED_ROI = 0.20
 SAFE_REAL_ROI = 0.15
@@ -206,17 +207,50 @@ def classify(op: Opportunity, st: ItemStats, extra_risky: list, extra_safe_ok: b
     op.risk = SAFE if safe else MODERATE
 
 
+UNKNOWN_OUTLET = 0.5  # Splendent pieces per day assumed sellable when there's no sales evidence
+
+
+def combo_outlet(res: CraftResult, ctx: CraftContext) -> float:
+    """Splendent pieces per day you can turn into kinah: your share of their own sales, or of the
+    next-tier item's sales when the app says to craft with them."""
+    if res.combo_best == "craft" and res.combo_use_outlet:
+        key, success, out_qty, qty = res.combo_use_outlet
+        ust = ctx.stats.get(key)
+        if ust and ust.sales_per_day and success > 0:
+            return ust.sales_per_day * MARKET_SHARE / (success * out_qty) * qty
+        return UNKNOWN_OUTLET
+    cst = ctx.stats.get(res.combo_key) if res.combo_key else None
+    if cst and cst.sales_per_day:
+        return cst.sales_per_day * MARKET_SHARE
+    return UNKNOWN_OUTLET
+
+
 def craft_opportunity(res: CraftResult, ctx: CraftContext) -> Opportunity | None:
-    if res.profit <= 0:
+    if not res.priced or res.profit <= 0:
         return None
     st = ctx.stats[res.out_key]
     outputs_per_attempt = res.success * res.recipe.out_qty
     market = st.sales_per_day
     your_units = (market or 0) * MARKET_SHARE
     attempts_day = your_units / outputs_per_attempt if outputs_per_attempt > 0 else 0
+    revenue, pess = res.ev, res.ev_pessimistic
+    if res.p_combo > 0 and attempts_day > 0:
+        # Splendent pieces only count up to what their market (or the next-tier item's) takes per day
+        outlet = combo_outlet(res, ctx)
+        pieces = attempts_day * res.p_combo
+        if pieces > outlet:
+            plain_part = res.p_plain * res.plain_value - res.cost
+            if plain_part < 0:   # only the combos pay: craft no more than the Splendent market takes
+                attempts_day = outlet / res.p_combo
+            else:                # normal results pay on their own: extra Splendents are worth nothing here
+                keep_share = outlet / pieces
+                revenue = res.ev - res.p_combo * res.combo_value * (1 - keep_share)
+                pess = res.ev_pessimistic - res.p_combo * res.combo_value * (1 - keep_share)
+    if revenue - res.cost <= 0:
+        return None
     op = Opportunity(
-        method="Craft", name=res.name, key=res.recipe.id, cost_unit=res.cost, revenue_unit=res.ev,
-        profit_unit=res.profit, profit_pess_unit=res.profit_pessimistic, market_per_day=market,
+        method="Craft", name=res.name, key=res.recipe.id, cost_unit=res.cost, revenue_unit=revenue,
+        profit_unit=revenue - res.cost, profit_pess_unit=pess - res.cost, market_per_day=market,
         your_per_day=attempts_day, sell_price=st.expected_sell, buy_price=None, craft=res, stats=st,
         outputs_per_unit=outputs_per_attempt,
     )
@@ -233,7 +267,9 @@ def craft_opportunity(res: CraftResult, ctx: CraftContext) -> Opportunity | None
                 risky.append(f"ingredient {line.name} has only {ist.listings} listing(s)")
     if st.falling:
         risky.append(f"{res.name} price falling: {st.trend_short:+.0%} in the last day")
-    if st.listings < 3:
+    if not res.price_ok:
+        risky.append(f"only {st.listings} listed and no sales record: the price is a guess")
+    elif st.listings < 3:
         risky.append(f"only {st.listings} listed right now: its price comes from past sales")
     for n in res.notes:
         op.reasons.append(n)
@@ -276,15 +312,19 @@ def resell_opportunity(st: ItemStats, keep: float) -> Opportunity | None:
 
 def all_opportunities(ctx: CraftContext, crafts: list[CraftResult]) -> list[Opportunity]:
     ops = []
+    best_craft: dict[str, Opportunity] = {}
     for res in crafts:
         op = craft_opportunity(res, ctx)
-        if op:
-            ops.append(op)
+        if op and op.real_profit_unit > 0:  # one row per item: its best recipe
+            cur = best_craft.get(res.out_key)
+            if cur is None or op.real_profit_day > cur.real_profit_day:
+                best_craft[res.out_key] = op
+    ops.extend(best_craft.values())
     for st in ctx.stats.values():
         if st.name and "(Bound)" in st.name:
             continue
         op = resell_opportunity(st, ctx.keep)
-        if op:
+        if op and op.real_profit_unit > 0:
             ops.append(op)
     ops.sort(key=lambda o: o.real_profit_day, reverse=True)
     return ops

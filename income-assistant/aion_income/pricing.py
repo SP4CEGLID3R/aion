@@ -311,6 +311,23 @@ def counter_days(t0: float, u0: float, t1: float, u1: float, now: float) -> floa
     return min(28.0, max(1.0, (now - start) / 86400))
 
 
+# Counting listings that disappear understates sales: one listing of a stackable holds many units,
+# and a gear listing that sold can be replaced before the next look. On Kaisinel, which publishes
+# real sales, real units sold per day were (median / lower quarter) this many times the count:
+#   gear      <10k 1.2/0.7 · 10k-100k 2.6/1.35 · 100k-1M 2.0/1.1 · 1M+ 2.0/1.1
+#   stackable <10k 203/51  · 10k-100k 39/27    · 100k-1M 9.7/6.3 · 1M+ 3.2/1.4
+# The lower quarter is used: cautious, but far closer to reality than the raw count.
+DISAPPEAR_SCALE = {"gear": ((1e4, 1.0), (1e5, 1.35), (1e6, 1.1), (float("inf"), 1.1)),
+                   "stack": ((1e4, 51.0), (1e5, 27.0), (1e6, 6.3), (float("inf"), 1.4))}
+GEAR_SECTIONS = {"armor", "weapons", "accessories", "skins"}
+
+
+def disappear_scale(section: str | None, price: float | None) -> float:
+    table = DISAPPEAR_SCALE["gear" if section in GEAR_SECTIONS else "stack"]
+    p = price or 0.0
+    return next(f for top, f in table if p < top)
+
+
 def build_stats(row: dict, hourly=None, buckets=None, snapshots=None, depth=None, now=None,
                 sales_days: float = 28.0) -> ItemStats:
     cat = row.get("category") or {}
@@ -375,7 +392,9 @@ def build_stats(row: dict, hourly=None, buckets=None, snapshots=None, depth=None
             if rate is not None and (best is None or hours > best[2]):
                 best = (rate, basis, hours)
         if best:
-            st.sales_per_day, st.sales_basis, st.sales_hours = best
+            rate, basis, hours = best
+            rate *= disappear_scale(st.section, st.ref or st.ask)
+            st.sales_per_day, st.sales_basis, st.sales_hours = rate, basis + ", scaled by Kaisinel's real sales", hours
 
     st.bulk_unit, st.bulk_units = depth_price(depth)
 

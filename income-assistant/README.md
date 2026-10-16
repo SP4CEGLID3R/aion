@@ -45,7 +45,9 @@ memory or its network traffic.
 2. Press **Refresh**. Every press downloads the latest Lumiel prices. The
    first one takes about 40 seconds because it loads price history for the
    important items. Later ones take a few seconds.
-3. **Best ways to earn** lists every opportunity, sorted by **profit per day**.
+3. **Best ways to earn** lists every opportunity (one row per item, its best
+   recipe), sorted by **profit per day**. Few rows usually means few recipes are
+   profitable at today's prices: the Crafting page shows all of them.
    Tick *Safe / Moderate / Risky* to filter, or *Fast sellers only*. Click a
    row for step-by-step instructions: ingredients, where to get each one
    cheapest, what to list at, how many to buy.
@@ -54,9 +56,13 @@ memory or its network traffic.
    and the expected profit. Below that are three suggested amounts worth
    holding for trading (Low ≤ 5M, Mid ≤ 15M, High ≤ 30M), based on how much
    the market can actually absorb.
-5. **Crafting** shows every recipe you can make, with the estimated success
-   rate. If the game's probability tab shows a different number, type it in
-   and every result updates.
+5. **Crafting** shows every recipe you can make at your levels (levels apply as
+   soon as you change them, no button needed), with the estimated success rate,
+   the cost per attempt and the **average cost per finished item** (failed
+   attempts included). Recipes whose result has no market price yet still show
+   their cost. Click one for its ingredients and **what to do with Splendent
+   pieces from combo procs**. If the game's probability tab shows a different
+   success rate, type it in and every result updates.
 6. **Market** lists all items, with a price chart, usual price, sales speed and
    warnings.
 
@@ -108,12 +114,12 @@ random/real-order replay × 347 runs = **999,360 simulated 50-day runs, starting
 
 | Setting | EU | NA | Built in |
 |---|---|---|---|
-| Days of stock bought at once | 2 d → 52M · 3 → 57M · 5 → 62M · 7 → 64M (search average); 10 days beat 7 in a follow-up (78 → 81M typical) | 7 → 102M, 10 → 107M | **up to 10 days while prices hold, fewer when they fall** (see below) |
+| Days of stock bought at once | 2 d → 77M · 3 → 83M · 5 → 90M · 7 → 94M (search average); 10 days beat 7 in a follow-up | 7 → 102M, 10 → 107M | **up to 10 days while prices hold, fewer when they fall** (see below) |
 | Minimum predicted return | 10% ≈ 20% > 35%; every top strategy used 20% | 20% best | **+20%**, thinner trades are Risky |
-| Most budget in one item | 25% grew ~3M more on average, but on Kaisinel in real order it lost money in 2% of runs (15%: 0.3%) | 15% clearly better bad-luck results | **15%** |
+| Most budget in one item | 25% grew ~4% more on average, but on Kaisinel in real order 15% had the better bad-luck results | 15% clearly better bad-luck results | **15%** |
 | "Loses money if the price falls to its recent low" | made −8% | made −2% | **Risky** |
 | Skipping combo-luck trades | **−16M** | −8M | kept, **Moderate** (never Safe) |
-| Skipping swingy trades | −5M | −8M | kept |
+| Skipping swingy trades | −7M | −8M | kept |
 | Skipping gear crafts (armour, weapons, accessories) | 80M → 52M | 106M → 58M | kept: gear plus materials beats either alone |
 | Realistic-return fit | 1.23·ln(1+p) − 0.09 | 1.06·ln(1+p) − 0.12 | **EU fit**; it changed no ranking (58.4M either way), only the numbers shown |
 
@@ -121,36 +127,39 @@ What trades really made in EU, by predicted return: under +20% → about −1.5%
 +20–35% → +32%; +35–50% → +42%; +50–100% → +47%; +100–200% → +120%. The app's
 "realistic" columns use this EU fit.
 
-Results with 30M after 50 days (shipped default, same dice for every plan):
+Results with 30M after 50 days (shipped default, same dice for every plan). These
+were re-run after a code review fixed how sales speed is read (see *Sales speed*
+below; it had been understated ~2.5×) and how combo procs are valued:
 
 | | Median | 10–90% of runs | Runs below 30M |
 |---|---|---|---|
-| EU, previous NA-tuned default | 84.5M | 68–101M | 0.1% |
-| **EU, shipped default** | **86.6M (+1.1M/day)** | **71–105M** | **0%** |
-| · Kaisinel (real sales) | 55.6M (+0.5M/day) | 44–74M | 0% |
-| · Zikel (borrowed volumes) | 113.9M | 99–135M | 0% |
-| NA, same shipped default | 103.8M | 78–156M | 0% |
+| **EU, shipped default** | **110M (+1.6M/day)** | **94–139M** | **0%** |
+| · Kaisinel (real sales) | 115M (+1.7M/day) | 92–152M | 0% |
+| · Zikel (borrowed volumes) | 109M | 95–126M | 0% |
+| · Kaisinel if you win only half the buyers assumed | 77M (+0.9M/day) | 62–104M | 0% |
+| NA, same shipped default | 133M | 100–212M | 0% |
 
-**Expect Kaisinel-like numbers on Lumiel:** about **+25M on 30M over 50 days**
-(+0.5M/day). Kaisinel is the only server whose sales are real. Zikel and the NA
-servers borrow sales volumes, which may overstate how much sells. The game is new
-and prices are hard to predict, so refresh often: the app keeps re-learning from
-your own history.
+**On Lumiel, plan for +45M to +85M on 30M over 50 days** (the half-buyers and the
+full Kaisinel rows). The app assumes you win 30% of an item's buyers as one more
+seller; nobody can measure that yet, so the lower row is the cautious case. From
+15M, a typical first week ended around 25M (about 11M of it cash, the rest stock
+still listed). The game is new and prices are hard to predict, so refresh often:
+the app keeps re-learning from your own history.
 
 **Why buy stock and sell it over days, and when not to.** You can only have 10
 listings up, and each takes ~5 minutes to post, so the listing slots are the
 bottleneck, not your kinah. Holding a few days of stock keeps all 10 slots full
-(on ~93% of days with 5+ days of stock, vs ~50% when buying only a day's worth).
+(on ~89% of days with 5+ days of stock, vs ~40% when buying only a day's worth).
 But stock bought today sells at later prices. The simulator replays real prices,
 which don't capture a long slide, so it was re-run with prices trending on top
 (EU, 30M, 50 days, typical result):
 
 | Prices move | 1 day of stock | 3 days | 5 days | 10 days | App (adaptive) |
 |---|---|---|---|---|---|
-| −3%/day | 38M | **42M** | 42M | 38M (27% of runs lose) | **42M** (11% lose) |
-| −1.5%/day | 42M | 51M | **54M** | 53M | **54M** |
-| flat | 50M | 67M | 75M | **81M** | **81M** |
-| +1%/day | 59M | 85M | 96M | **111M** | **111M** |
+| −3%/day | 51M | **59M** | 55M | 50M | **59M** |
+| −1.5%/day | 60M | **74M** | 74M | 74M | **74M** |
+| flat | 74M | 100M | 105M | **115M** | **115M** |
+| +1%/day | 88M | 125M | 136M | **156M** | **156M** |
 
 So the plan follows how this week's prices of its own items moved: **up to 10 days
 of stock if they hold (better than −0.5%/day), 5 days if they fall 0.5–2%/day,
@@ -164,12 +173,12 @@ in the data: the items the plan trades rose 21% in 10 days on Kaisinel and fell
 price until it sells. Typical runs dip about 22% at some point and still end well up.
 Don't panic-sell stock in a dip.
 
-**How much to keep liquid (EU).** Extra kinah stops paying off quickly. On
-Kaisinel, profit was +22M with 10M, +25M with 15M, and no better with 20–30M. A
-busy day's buying needs about 3.5–4.5M, and about 45% of your trading money is
-cash at any moment. So a **15M trading pot, with at least 5M of it always in cash**,
-is the sweet spot. Up to 20M still helps on busier servers; past 30M it's
-pointless. The *How much kinah is worth holding* cards on **My plan** show the
+**How much to keep liquid (EU).** Extra kinah stops paying off quickly, because the
+10 listing slots and your playing time are the limit, not money. Across EU runs,
+profit over 50 days was +70M starting from 5M, +75M from 10M, +81M from 20M and
++85M from 50M. A busy day's buying needs about 7–9M, and about half your trading
+money is cash at any moment. So a **15–20M trading pot, with about 8M of it always
+in cash**, is the sweet spot; past 30M it's pointless. The *How much kinah is worth holding* cards on **My plan** show the
 same curve for your live market.
 
 **Weekly supply-request cycle.** In both EU and NA, crafted items were cheapest just
@@ -187,8 +196,9 @@ Once you've refreshed for a week or two, run it on your own Lumiel history:
 |---|---|
 | Usual price | Median of the last 72 hours of hourly prices. One bait listing can't move it. |
 | What you can sell at | Never above the usual price, never above the cheapest competing listing. |
-| Low stock / not selling | Items with fewer than 3 listings, or listed for 12+ hours without selling, are never used as proof of a profit. Spiked listings (far above usual) are ignored. |
-| Sales speed | Real sales counts when the site publishes them; otherwise listings that disappear between 10-minute snapshots and between your refreshes (×0.7, because some are cancellations). |
+| Low stock / not selling | An item with fewer than 3 listings and no sales record, or listed for 12+ hours without selling, is never proof of a profit: crafts that end in one are shown but always Risky ("the price is a guess"). Spiked listings (far above usual) are ignored. |
+| Sales speed | The site's "units sold" counter covers 28 days, but on a market younger than that only the days so far, so the app measures how long the counter has run from its growth between your refreshes (it assumes 28 days until it can tell). Servers without the counter (like Lumiel) count listings that disappear between snapshots and refreshes; on Kaisinel real sales were 1–2× that count for gear and 6–200× for stackables (one listing holds many units), so the count is scaled by the cautious end of that. |
+| Combo procs | A success can proc the Splendent version (recipe combo chance × your combo rate). A Splendent is valued at the better of selling it (only if people buy it) or using it as the base for the next-tier craft (that craft's normal result after its other ingredients, failures and tax). Splendent pieces only count up to what their market, or the next-tier item's, takes per day. Each recipe says whether to sell them or craft with them. |
 | Your share | As one more seller you're assumed to win 30% of an item's daily sales. A suggested batch is about one day of that. |
 | Fast vs. big margin | Ranked by profit per day. In the plan, money from fast sellers is re-spent as it comes back, so a 5% item that sells in hours can beat a 30% item that takes a week. |
 | Market tax | 10% sales tax + 2% listing fee by default (most guides agree; one says 8%). Change it in Settings. |
@@ -196,7 +206,8 @@ Once you've refreshed for a week or two, run it on your own Lumiel history:
 | Other substitutions | Crafting intermediates yourself (ore → ingot → gear) when cheaper, alternative ingredients a recipe accepts, NPC-shop supplies, and bulk prices for big quantities (the cheapest listing runs out). |
 | Crafting success | Estimated from your proficiency minus the recipe level, using community measurements of the game's probability tab (e.g. Superior Healing Potion 72.88% at +0 → 90.89% at +60; Dragon Lord gear 67.5% → 94.6%). Failed crafts lose the materials. A success has the recipe's combo chance (usually 25%) of rolling for the Splendent version. |
 | Risk: Safe | Real sales evidence, stable prices, still profitable if prices drop to their recent low, sells within ~3 days, and for crafts a success rate of 85%+. |
-| Risk: Risky | No sales evidence, big price swings, slow selling, falling price, an ingredient with almost no listings, or profit that only exists if the Splendent combo hits. |
+| Risk: Moderate | Everything that's neither Safe nor Risky, including profit that only exists if the Splendent combo hits (those swing more but paid off in the simulations). |
+| Risk: Risky | No sales evidence, predicted return under +20%, slow selling, a loss if prices fall to their recent low, or a result whose price is a guess. |
 
 ## Data sources
 

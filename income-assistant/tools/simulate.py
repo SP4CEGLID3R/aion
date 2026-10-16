@@ -265,7 +265,22 @@ def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, 
                 if c.combo_key:
                     p = c.recipe.combo_chance * c.combo_rate
                     combo = sum(1 for _ in range(succ) if rng.random() < p)
-                    if combo:
+                    if combo and c.combo_best == "craft" and c.combo_use_outlet:
+                        # the app says to use them for the next-tier craft: pay its other ingredients,
+                        # roll its success, and sell what comes out like any other stock
+                        ukey, s2, oq, q = c.combo_use_outlet
+                        ust = a.stats.get(ukey)
+                        tries = int(combo // q)
+                        if ust and ust.expected_sell and tries:
+                            other = max(0.0, s2 * ust.expected_sell * oq * keep - c.combo_use * q)
+                            tries = min(tries, int(cash // other)) if other > 0 else tries
+                            cash -= tries * other
+                            my_trades[tid]["cost"] += tries * other
+                            made = sum(1 for _ in range(tries) if rng.random() < s2) * oq
+                            add(ukey, made, tid)
+                            lot_of[ukey] = 1
+                            rate_of[ukey] = ust.sales_per_day or 0.0
+                    elif combo:
                         cs = a.stats.get(c.combo_key)
                         add(c.combo_key, combo, tid)
                         lot_of[c.combo_key] = 1

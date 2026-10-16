@@ -416,6 +416,29 @@ class MainWindow(QMainWindow):
         o = selected_row(self.best_view)
         self.best_detail.setHtml(self.opportunity_html(o) if o else self._empty_detail("Select a row."))
 
+    def craft_extra_html(self, c) -> str:
+        """Average cost per finished item, and what to do with Splendent pieces from combo procs."""
+        out = [f"<p><span class='muted'>Average cost per finished item (failures included):</span> "
+               f"<b>{kinah(c.avg_cost_item)}</b></p>"]
+        if c.combo_name:
+            proc = c.success * c.recipe.combo_chance * (c.combo_rate or 0)
+            head = (f"<b>Combo procs:</b> about {proc:.1%} of attempts (≈ 1 in {1 / proc:.0f}) give "
+                    f"<b>{esc(c.combo_name)}</b>. " if proc > 0 else f"<b>Combo procs</b> give <b>{esc(c.combo_name)}</b>. ")
+            if c.combo_best == "craft":
+                tail = (f"<span class='green'>Use them:</span> crafting <b>{esc(c.combo_use_name)}</b> with one is worth "
+                        f"about <b>{kinah(c.combo_use)}</b> per piece (after that craft's other ingredients, its "
+                        f"failures and tax)" + (f", vs {kinah(c.combo_sell)} if you sell it." if c.combo_sell else
+                                                 ", and nobody is buying it on the market right now."))
+            elif c.combo_best == "sell":
+                tail = (f"<span class='green'>Sell them:</span> about <b>{kinah(c.combo_sell)}</b> each after tax"
+                        + (f" (as the base for {esc(c.combo_use_name)} one is worth only {kinah(c.combo_use)})."
+                           if c.combo_use else "."))
+            else:
+                tail = ("<span class='amber'>Keep them for now:</span> nobody is buying them and no next-tier craft "
+                        "you can make turns them into profit at today's prices, so they're counted as normal items.")
+            out.append(f"<p>{head}{tail}</p>")
+        return "".join(out)
+
     def opportunity_html(self, o) -> str:
         s = self.settings
         st = o.stats
@@ -456,9 +479,9 @@ class MainWindow(QMainWindow):
                 f"{s.tax_pct:g}% tax + {s.fee_pct:g}% fee = <span class='green'>{kinah(c.profit, True)}</span> "
                 f"<span class='muted'>(if prices dip: {kinah(c.profit_pessimistic, True)})</span><br>"
                 f"<span class='muted'>Outcomes:</span> fail {c.p_fail:.1%} · normal {c.p_plain:.1%}"
-                + (f" · Splendent {c.p_combo:.1%} (sells ~{kinah(c.combo_value / s.keep if s.keep else 0)})"
-                   if c.combo_key else "")
+                + (f" · Splendent {c.p_combo:.1%}" if c.combo_key else "")
                 + f" · <span class='muted'>chance 10 crafts lose money:</span> {batch_loss_probability(c, 10):.0%}</p>")
+            out.append(self.craft_extra_html(c))
         else:
             out.append(
                 f"<p><b>What to do:</b> buy at <span class='gold'>{kinah(o.buy_price)}</span> or less (cheapest "
@@ -678,7 +701,7 @@ class MainWindow(QMainWindow):
         top.addWidget(self.prof_box)
         self.craft_profit_only = QCheckBox("Profitable only")
         self.craft_profit_only.setObjectName("Chip")
-        self.craft_profit_only.setChecked(True)
+        self.craft_profit_only.setChecked(False)  # show every recipe you can make by default
         self.craft_profit_only.toggled.connect(self._apply_craft_filter)
         top.addWidget(self.craft_profit_only)
         top.addStretch(1)
@@ -699,15 +722,20 @@ class MainWindow(QMainWindow):
                    color=lambda c: theme.VIOLET if c.recipe.id in self.settings.overrides else None,
                    tip=lambda c: "Estimated from your level; set your in-game value below"),
             Column("Cost / craft", lambda c: c.cost, lambda c: kinah(c.cost), align="right"),
-            Column("Expected back", lambda c: c.ev, lambda c: kinah(c.ev), align="right", width=120),
-            Column("Profit / craft", lambda c: c.profit, lambda c: kinah(c.profit, True), align="right", bold=True,
+            Column("Avg cost / item", lambda c: c.avg_cost_item, lambda c: kinah(c.avg_cost_item), align="right",
+                   width=130, tip=lambda c: "Average kinah per finished item, failed attempts included"),
+            Column("Expected back", lambda c: c.ev, lambda c: kinah(c.ev) if c.priced else "no price", align="right",
+                   width=120),
+            Column("Profit / craft", lambda c: c.profit if c.priced else float("-inf"),
+                   lambda c: kinah(c.profit, True) if c.priced else "—", align="right", bold=True,
                    color=lambda c: theme.GREEN if c.profit > 0 else theme.RED, width=120),
-            Column("If prices dip", lambda c: c.profit_pessimistic, lambda c: kinah(c.profit_pessimistic, True),
+            Column("If prices dip", lambda c: c.profit_pessimistic if c.priced else float("-inf"),
+                   lambda c: kinah(c.profit_pessimistic, True) if c.priced else "—",
                    align="right", color=lambda c: theme.MUTED, width=115),
             Column("Sold / day", lambda c: self._sales(c.out_key), lambda c: self._sales_text(c.out_key), align="right"),
         ]
         self.craft_model, self.craft_proxy, self.craft_view = make_table(cols)
-        self.craft_view.sortByColumn(6, Qt.DescendingOrder)
+        self.craft_view.sortByColumn(7, Qt.DescendingOrder)
         self.craft_view.selectionModel().selectionChanged.connect(self._craft_selected)
 
         bottom = QWidget()
@@ -772,11 +800,19 @@ class MainWindow(QMainWindow):
         else:
             lines = "".join(f"<tr><td>{esc(l.name)}</td><td align=right>{l.qty}</td><td align=right>{kinah(l.unit)}</td>"
                             f"<td class='muted'>{esc(l.source.detail)}</td></tr>" for l in c.lines)
+            if not c.priced:
+                verdict = (f"<p class='amber'>No market price for it yet, so no profit estimate: cost "
+                           f"{kinah(c.cost)} per attempt (success {c.success:.1%}).</p>")
+            elif c.profit > 0:
+                verdict = (f"<p class='amber'>Profitable on paper ({kinah(c.profit, True)} per attempt), but not "
+                           f"a recommended trade: see Best ways to earn with Risky ticked for why.</p>")
+            else:
+                verdict = (f"<p class='red'>Not profitable right now: cost {kinah(c.cost)} per attempt, "
+                           f"expected back {kinah(c.ev)} (success {c.success:.1%}).</p>")
             self.craft_detail.setHtml(
-                f"<h2>{esc(c.name)}</h2><p class='red'>Not profitable right now: cost {kinah(c.cost)} per attempt, "
-                f"expected back {kinah(c.ev)} (success {c.success:.1%}).</p>"
+                f"<h2>{esc(c.name)}</h2>{verdict}"
                 f"<table cellspacing=0><tr><th>INGREDIENT</th><th align=right>QTY</th><th align=right>UNIT</th>"
-                f"<th>CHEAPEST SOURCE</th></tr>{lines}</table>")
+                f"<th>CHEAPEST SOURCE</th></tr>{lines}</table>" + self.craft_extra_html(c))
 
     def _override_changed(self):
         c = selected_row(self.craft_view)
@@ -1299,7 +1335,8 @@ class MainWindow(QMainWindow):
         self._apply_market_filter()
         n_levels = any(self.settings.levels.values())
         self.craft_hint.setText(
-            f"{len(a.crafts)} recipes you can craft have a reliable market price."
+            f"{len(a.crafts)} recipes you can craft at your levels ({sum(1 for c in a.crafts if c.priced)} with a "
+            f"market price). Levels apply as soon as you change them in Settings."
             if n_levels else "Set your crafting levels in Settings to see recipes.")
         self._update_plan()
         self._update_banner()
