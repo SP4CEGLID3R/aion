@@ -13,15 +13,19 @@ from aion_income.recipes import compact_graph, load_book
 
 def test_find_lumiel(fake):
     c = ExchangeClient(fake.base, min_interval=0, retry_waits=(0.01,))
-    s = c.find_server("Lumiel")
-    assert s["server_id"] == 12104 and s["faction"] == "Asmodian"
+    s = c.find_server("Lumiel")             # EU by default
+    assert s["server_id"] == 12304 and s["faction"] == "Asmodian" and s["region"] == "EU"
+    assert c.find_server("Lumiel", "NAE")["server_id"] == 12104
+    assert c.find_server("lumiel", "Europe")["server_id"] == 12304
+    with pytest.raises(ApiError):
+        c.find_server("Lumiel", "Mars")
     with pytest.raises(ApiError):
         c.find_server("Nope")
 
 
 def test_items_paginates_within_api_limit(fake):
     c = ExchangeClient(fake.base, min_interval=0, retry_waits=(0.01,))
-    rows = c.items(12104)
+    rows = c.items(12304)
     assert len(rows) == len(fake.rows)
     assert len({r["item_key"] for r in rows}) == len(rows)
     assert all("limit=200" in r or "/items?" not in r for r in fake.requests)
@@ -112,10 +116,12 @@ def test_settings_roundtrip_and_bad_file(tmp_path):
     s.overrides = {"123": 88.5}
     s.budget = 12e6
     s.play_hours = 5.5
+    s.server_region = "NAW"
     s.save(str(p))
     t = Settings.load(str(p))
     assert t.levels["alchemy"] == 77 and t.overrides == {"123": 88.5} and t.budget == 12e6
-    assert t.play_hours == 5.5
+    assert t.play_hours == 5.5 and t.server_region == "NAW"
+    assert Settings().server_region == "EU"
     p.write_text("{broken")
     assert Settings.load(str(p)).levels["alchemy"] == 0
     p.write_text(json.dumps({"levels": {"alchemy": "x"}, "tax_pct": -5, "risks": ["Bogus", "Safe"]}))

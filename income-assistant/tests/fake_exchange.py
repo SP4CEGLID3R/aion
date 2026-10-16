@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures")
-LUMIEL = 12104
+LUMIEL = 12304  # EU Lumiel
 
 
 def load_rows():

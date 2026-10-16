@@ -81,10 +81,19 @@ class ExchangeClient:
             raise ApiError("aion2.exchange /servers returned no server list")
         return j["servers"]
 
-    def find_server(self, name: str = "Lumiel") -> dict:
+    def find_server(self, name: str = "Lumiel", region: str | None = "EU") -> dict:
+        """The server with this name in this region (several regions reuse the same names:
+        there is a Lumiel in EU, NA East, NA West, South America and Asia)."""
         matches = [s for s in self.servers() if str(s.get("name", "")).strip().lower() == name.lower()]
         if not matches:
             raise ApiError(f"server '{name}' not found on aion2.exchange")
+        if region:
+            r = region.strip().lower()
+            in_region = [s for s in matches if r in (str(s.get("region", "")).lower(), str(s.get("region_name", "")).lower())]
+            if not in_region:
+                have = ", ".join(sorted({str(s.get("region")) for s in matches}))
+                raise ApiError(f"no server '{name}' in region {region} (found in: {have})")
+            matches = in_region
         matches.sort(key=lambda s: (not s.get("has_data", True),))
         return matches[0]
 

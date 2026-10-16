@@ -15,7 +15,10 @@ from .recipes import PROFESSIONS, RecipeBook, load_book
 from .store import HistoryStore, parse_ts
 from . import supply as supply_mod
 
-LUMIEL_FALLBACK = {"server_id": 12104, "name": "Lumiel", "region": "NAE", "faction": "Asmodian"}
+REGIONS = {"EU": "Europe", "NAE": "North America East", "NAW": "North America West", "LA": "South America",
+           "AS": "Asia"}
+# Known ids for when the server list can't be downloaded (Lumiel is Asmodian in every region).
+LUMIEL_IDS = {"EU": 12304, "NAE": 12104, "NAW": 12204, "LA": 12404, "AS": 12504}
 
 HOURLY_TTL = 30 * 60
 BUCKETS_TTL = 20 * 60
@@ -42,6 +45,7 @@ class Settings:
     play_hours: float = 8.0
     risks: list = field(default_factory=lambda: ["Safe", "Moderate"])
     server_name: str = "Lumiel"
+    server_region: str = "EU"
 
     @property
     def keep(self) -> float:
@@ -71,6 +75,10 @@ class Settings:
         s.supply_requests = supply_mod.from_json(raw.get("supply_requests"))
         if isinstance(raw.get("risks"), list):
             s.risks = [r for r in raw["risks"] if r in ("Safe", "Moderate", "Risky")]
+        if isinstance(raw.get("server_name"), str) and raw["server_name"].strip():
+            s.server_name = raw["server_name"].strip()
+        if raw.get("server_region") in REGIONS:
+            s.server_region = raw["server_region"]
         return s
 
     def save(self, path: str) -> None:
@@ -80,7 +88,8 @@ class Settings:
                        "overrides": self.overrides, "budget": self.budget,
                        "supply_requests": supply_mod.to_json(self.supply_requests), "horizon": self.horizon,
                        "play_hours": self.play_hours,
-                       "risks": self.risks, "server_name": self.server_name}, f, indent=1)
+                       "risks": self.risks, "server_name": self.server_name,
+                       "server_region": self.server_region}, f, indent=1)
         os.replace(tmp, path)
 
 
@@ -140,14 +149,18 @@ class Engine:
     # ── download ─────────────────────────────────────────────────────────
 
     def download(self, settings: Settings, progress=lambda msg, frac: None) -> MarketData:
-        progress("Finding Lumiel server…", 0.02)
+        progress(f"Finding {settings.server_name} ({settings.server_region})…", 0.02)
         warnings = []
         start_requests = self.client.request_count
         try:
-            server = self.client.find_server(settings.server_name)
+            server = self.client.find_server(settings.server_name, settings.server_region)
         except ApiError as e:
-            server = dict(LUMIEL_FALLBACK)
-            warnings.append(f"Server list unavailable ({e}); using Lumiel id {server['server_id']}.")
+            sid = LUMIEL_IDS.get(settings.server_region) if settings.server_name.lower() == "lumiel" else None
+            if sid is None:
+                raise
+            server = {"server_id": sid, "name": "Lumiel", "region": settings.server_region,
+                      "region_name": REGIONS[settings.server_region], "faction": "Asmodian"}
+            warnings.append(f"Server list unavailable ({e}); using Lumiel {settings.server_region} id {sid}.")
         sid = int(server["server_id"])
         progress("Downloading market prices…", 0.06)
         offline = False

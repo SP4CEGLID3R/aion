@@ -28,10 +28,10 @@ HORIZONS = [("1 day", 1.0), ("3 days", 3.0), ("7 days", 7.0)]
 METHOD_COLORS = {"Craft": theme.BLUE, "Resell": theme.VIOLET}
 
 PAGES = [
-    ("earn", "Best ways to earn", "Every way to make kinah on Lumiel right now, ranked by profit per day"),
+    ("earn", "Best ways to earn", "Every way to make kinah on your server right now, ranked by profit per day"),
     ("plan", "My plan", "What to buy with your kinah, and how much is worth holding"),
     ("craft", "Crafting", "Every recipe you can craft, with your success rate and real costs"),
-    ("market", "Market", "All Lumiel listings with usual prices, sales speed and history"),
+    ("market", "Market", "All listings on your server with usual prices, sales speed and history"),
     ("supply", "Supply requests", "Items your daily and weekly supply requests ask for: extra buyers while they run"),
     ("settings", "Settings", "Your crafting levels and market fees"),
 ]
@@ -217,12 +217,13 @@ class MainWindow(QMainWindow):
         pl.addWidget(dot)
         pv = QVBoxLayout()
         pv.setSpacing(0)
-        a = QLabel("LUMIEL")
-        a.setStyleSheet("font-weight:700;letter-spacing:1px")
-        b2 = muted("Asmodian · NA East")
-        b2.setStyleSheet(f"color:{theme.MUTED};font-size:8.5pt")
-        pv.addWidget(a)
-        pv.addWidget(b2)
+        self.server_label = QLabel(self.settings.server_name.upper())
+        self.server_label.setStyleSheet("font-weight:700;letter-spacing:1px")
+        from ..engine import REGIONS
+        self.server_sub = muted(REGIONS.get(self.settings.server_region, self.settings.server_region))
+        self.server_sub.setStyleSheet(f"color:{theme.MUTED};font-size:8.5pt")
+        pv.addWidget(self.server_label)
+        pv.addWidget(self.server_sub)
         pl.addLayout(pv, 1)
         lay.addWidget(pill)
         lay.addSpacing(8)
@@ -255,7 +256,7 @@ class MainWindow(QMainWindow):
         self.refresh_btn.setIconSize(QSize(16, 16))
         self.refresh_btn.setCursor(Qt.PointingHandCursor)
         self.refresh_btn.setShortcut("F5")
-        self.refresh_btn.setToolTip("Download the latest Lumiel prices (F5)")
+        self.refresh_btn.setToolTip("Download the latest prices for your server (F5)")
         self.refresh_btn.clicked.connect(self.refresh)
         bar.addWidget(self.refresh_btn)
         return bar
@@ -990,7 +991,7 @@ class MainWindow(QMainWindow):
             matches = [v for n, v in names.items() if text.lower() in n]
             hit = matches[0] if len(matches) == 1 else None
         if not hit:
-            self.supply_msg.setText("Item not found on the Lumiel market"
+            self.supply_msg.setText("Item not found on your server's market"
                                     + ("" if self.analysis else " — press Refresh first") + ". Pick a name from the list.")
             self.supply_msg.setStyleSheet(f"color:{theme.RED}")
             return
@@ -1056,10 +1057,11 @@ class MainWindow(QMainWindow):
         grid.addWidget(card(lv), 0, 0)
 
         tx = QVBoxLayout()
-        t2 = QLabel("MARKET & TIME")
+        t2 = QLabel("SERVER, MARKET & TIME")
         t2.setObjectName("SectionTitle")
         tx.addWidget(t2)
-        tx.addWidget(muted("10% tax + 2% fee per most guides. Max 10 listings at once, ~5 min each."))
+        tx.addWidget(muted("10% tax + 2% fee per most guides. Max 10 listings at once, ~5 min each. "
+                           "Server and region pick which market is read."))
         tf = QFormLayout()
         tf.setSpacing(10)
         self.tax_spin = QDoubleSpinBox()
@@ -1085,6 +1087,17 @@ class MainWindow(QMainWindow):
         self.hours_spin.setToolTip("Each listing takes ~5 min and only 10 can be up at once, so your time limits sales")
         self.hours_spin.valueChanged.connect(self._hours_changed)
         tf.addRow("Hours you play per day", self.hours_spin)
+        from ..engine import REGIONS
+        self.server_edit = QLineEdit(self.settings.server_name)
+        self.server_edit.setFixedWidth(140)
+        self.server_edit.editingFinished.connect(self._server_changed)
+        self.region_box = QComboBox()
+        for code, label in REGIONS.items():
+            self.region_box.addItem(label, code)
+        self.region_box.setCurrentIndex(max(0, self.region_box.findData(self.settings.server_region)))
+        self.region_box.currentIndexChanged.connect(self._server_changed)
+        tf.addRow("Server", self.server_edit)
+        tf.addRow("Region", self.region_box)
         tx.addSpacing(6)
         tx.addLayout(tf)
         tx.addStretch(1)
@@ -1094,7 +1107,7 @@ class MainWindow(QMainWindow):
         info = browser()
         info.setHtml(
             "<h2>How it works</h2>"
-            "<p>Prices come from the public <a href='https://aion2.exchange'>aion2.exchange</a> website (Lumiel). "
+            "<p>Prices come from the public <a href='https://aion2.exchange'>aion2.exchange</a> website, for the server and region set above. "
             "The app only reads that website — it never touches the game, its files or its memory.</p>"
             "<p><span class='gold'>Your own history.</span> Every Refresh is saved, so the app builds its own price "
             "and sales history. Refresh a few times a day and the sales-speed estimates keep getting better.</p>"
@@ -1118,6 +1131,19 @@ class MainWindow(QMainWindow):
         self._save_settings()
         self._update_banner()
         self.schedule_recalc()
+
+    def _server_changed(self):
+        from ..engine import REGIONS
+        name = self.server_edit.text().strip() or "Lumiel"
+        region = self.region_box.currentData()
+        if (name, region) == (self.settings.server_name, self.settings.server_region):
+            return
+        self.settings.server_name, self.settings.server_region = name, region
+        self._save_settings()
+        self.server_label.setText(name.upper())
+        self.server_sub.setText(REGIONS.get(region, region))
+        self.analysis = None
+        self.refresh()  # a different market: download it
 
     def _hours_changed(self):
         self.settings.play_hours = self.hours_spin.value()
@@ -1198,6 +1224,9 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_refreshed(self, analysis):
         self.analysis = analysis
+        srv = analysis.data.server
+        self.server_label.setText(str(srv.get("name", self.settings.server_name)).upper())
+        self.server_sub.setText(f"{srv.get('faction', '')} · {srv.get('region_name') or srv.get('region', '')}".strip(" ·"))
         self.recalculate(reuse=True)
         when = time.strftime("%H:%M", time.localtime(analysis.data.fetched_at))
         if analysis.data.offline:
