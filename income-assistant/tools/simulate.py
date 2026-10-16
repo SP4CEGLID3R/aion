@@ -153,6 +153,21 @@ class Market:
                 self.days.append((i, min(nxt, key=lambda j: abs(self.analyses[j][0] - ts - 86400))))
         if not self.days:
             raise SystemExit("not enough history: need snapshots spanning at least ~2 days")
+        self._px = {}
+        self._ops = {}
+
+    def prices(self, i):
+        """item -> (sell price, low-end price) for analysis i, computed once."""
+        if i not in self._px:
+            self._px[i] = {k: (st.sell_price or 0.0, st.sell_pessimistic or 0.0)
+                           for k, st in self.analyses[i][1].stats.items()}
+        return self._px[i]
+
+    def ops_for(self, i, strategy):
+        key = (i, id(strategy))
+        if key not in self._ops:
+            self._ops[key] = [o for o in self.analyses[i][1].ops if strategy.accept(o)]
+        return self._ops[key]
 
 
 def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, risks, keep,
@@ -167,17 +182,21 @@ def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, 
     worth, log = [], []
     minutes_cap = hours * 60 - OVERHEAD_MINUTES
 
+    totals: dict[str, float] = {}
+
     def held(k):
-        return sum(u for u, _ in inv.get(k, []))
+        return totals.get(k, 0.0)
 
     def add(k, units, tid):
         if units > 0:
             inv.setdefault(k, []).append([units, tid])
+            totals[k] = totals.get(k, 0.0) + units
 
     def take(k, units, unit_price):
         lots = inv.get(k, [])
         while units > 1e-9 and lots:
             u = min(units, lots[0][0])
+            totals[k] -= u
             my_trades[lots[0][1]]["revenue"] += u * unit_price
             my_trades[lots[0][1]]["sold"] += u
             lots[0][0] -= u
@@ -191,8 +210,9 @@ def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, 
             i, j = mkt.days[(seq_start + day) % len(mkt.days)]
         else:
             i, j = rng.choice(mkt.days)
-        a, nxt = mkt.analyses[i][1], mkt.analyses[j][1]
-        ops = [o for o in a.ops if strategy.accept(o)]
+        a = mkt.analyses[i][1]
+        ops = mkt.ops_for(i, strategy)
+        px_now, px_next = mkt.prices(i), mkt.prices(j)
         batch = strategy.batch_days
         if strategy.weekly_timing:
             import datetime as _dt
@@ -251,9 +271,9 @@ def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, 
 
         # selling: up to 10 items listed, most valuable flow first
         def price(k):
-            st = nxt.stats.get(k) or a.stats.get(k)
-            return (st.sell_price or 0.0) if st else 0.0
-        listed = sorted((k for k in inv if held(k) > 0), key=lambda k: -price(k) * min(held(k), rate_of.get(k, 0)))
+            v = px_next.get(k) or px_now.get(k)
+            return v[0] if v else 0.0
+        listed = sorted((k for k in inv if held(k) > 1e-9), key=lambda k: -price(k) * min(held(k), rate_of.get(k, 0)))
         listed = listed[:LISTING_SLOTS]
         relists_left = max(0, int((minutes_cap - craft_minutes) / LISTING_MINUTES) - len(listed))
         revenue = 0.0
@@ -278,11 +298,11 @@ def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, 
                 revenue += units * pr
         cash += revenue
         stock_value = 0.0
-        for k in inv:
-            st = nxt.stats.get(k)
-            u = held(k)
-            if u > 0 and st and st.sell_pessimistic:
-                stock_value += u * st.sell_pessimistic * keep
+        for k, u in totals.items():
+            if u > 1e-9:
+                v = px_next.get(k)
+                if v and v[1]:
+                    stock_value += u * v[1] * keep
         worth.append(cash + stock_value)
         log.append({"bought": bought, "revenue": revenue, "lines": len(plan.lines), "cash": cash,
                     "stock": stock_value, "listed": len(listed), "ops": len(ops)})
