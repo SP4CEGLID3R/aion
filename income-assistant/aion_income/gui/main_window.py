@@ -309,6 +309,12 @@ class MainWindow(QMainWindow):
         for k in (self.kpi_best, self.kpi_safe, self.kpi_fast, self.kpi_items):
             kpis.addWidget(k)
         lay.addLayout(kpis)
+        self.weekly_label = QLabel("WEEKLY CYCLE  ·  " + supply_mod.weekly_tip())
+        self.weekly_label.setWordWrap(True)
+        self.weekly_label.setStyleSheet(f"color:{theme.VIOLET};padding:2px 2px")
+        self.weekly_label.setToolTip("From price history around the weekly reset (supply requests). One week of data, "
+                                     "so treat it as a hint.")
+        lay.addWidget(self.weekly_label)
 
         filt = QHBoxLayout()
         filt.setSpacing(8)
@@ -338,13 +344,16 @@ class MainWindow(QMainWindow):
                    tip=lambda o: "\n".join(o.reasons) or "No warnings", pill=True, width=118),
             Column("Method", lambda o: o.method, color=lambda o: METHOD_COLORS[o.method], pill=True, width=112),
             Column("Item", lambda o: o.name.lower(), lambda o: o.name, width=270, bold=True),
-            Column("Profit / day", lambda o: o.profit_day, lambda o: kinah(o.profit_day), align="right",
+            Column("Profit / day", lambda o: o.real_profit_day, lambda o: kinah(o.real_profit_day), align="right",
                    color=lambda o: theme.GOLD, bold=True, width=120,
-                   tip=lambda o: "What you can expect to earn per day, limited by how fast it sells"),
-            Column("Profit / item", lambda o: o.profit_unit, lambda o: kinah(o.profit_unit), align="right",
+                   tip=lambda o: f"Realistic profit per day (predicted {kinah(o.profit_day)}): trades like this "
+                                 f"really made about this much in simulations on real price history"),
+            Column("Profit / item", lambda o: o.real_profit_unit, lambda o: kinah(o.real_profit_unit), align="right",
                    color=lambda o: theme.GREEN, width=115,
-                   tip=lambda o: "Per item bought (per craft attempt for crafts), after market tax and fee"),
-            Column("ROI", lambda o: o.roi, lambda o: pct(o.roi), align="right", width=70),
+                   tip=lambda o: f"Realistic, per item bought / craft attempt, after tax and fee "
+                                 f"(predicted {kinah(o.profit_unit)})"),
+            Column("ROI", lambda o: o.real_roi, lambda o: pct(o.real_roi), align="right", width=70,
+                   tip=lambda o: f"Realistic return (predicted {pct(o.roi)})"),
             Column("Sells in", lambda o: o.sell_days if o.sell_days is not None else 1e9,
                    lambda o: speed_text(o.sell_days), align="right", width=95,
                    color=lambda o: theme.VIOLET if o.fast else None,
@@ -399,6 +408,7 @@ class MainWindow(QMainWindow):
         self._save_settings()
         self._apply_best_filter()
         self._update_plan()
+        self._update_kpis()
 
     def _best_selected(self):
         o = selected_row(self.best_view)
@@ -414,8 +424,9 @@ class MainWindow(QMainWindow):
                f"<p>{pill_html(o.risk, RISK_COLORS[o.risk])}&nbsp;&nbsp;{pill_html(o.method, METHOD_COLORS[o.method])}"
                f"&nbsp;&nbsp;<span class='muted'>{esc(sub)}</span></p>",
                "<table cellspacing=0><tr>",
-               stat_cell("Profit / day", kinah(o.profit_day), theme.GOLD),
-               stat_cell("Profit / item", kinah(o.profit_unit, True), theme.GREEN),
+               stat_cell("Profit / day", kinah(o.real_profit_day), theme.GOLD),
+               stat_cell("Profit / item", kinah(o.real_profit_unit, True), theme.GREEN),
+               stat_cell("Return", pct(o.real_roi, True), theme.GREEN),
                stat_cell("Sells in", speed_text(o.sell_days), theme.VIOLET if o.fast else theme.TEXT),
                stat_cell("Buy now", str(o.batch)),
                stat_cell("Sell at", kinah(o.sell_price)),
@@ -464,6 +475,10 @@ class MainWindow(QMainWindow):
                 f"(buyers take whole listings and prefer small ones) · ~{o.listings_per_day:.1f} listings/day · "
                 f"~{o.minutes_per_day:.0f} min/day of your time · <span class='gold'>{kinah(o.profit_per_listing)}</span> "
                 f"per listing</p>")
+        out.append(f"<p class='muted'>Realistic numbers above. The raw prediction is {kinah(o.profit_unit, True)} per item "
+                   f"({pct(o.roi, True)}); in simulations on five servers' real prices, trades predicted like this "
+                   f"made about {pct(o.real_roi, True)}. New-game prices are hard to predict, so the plan spreads "
+                   f"your kinah (max 15% per item).</p>")
         if o.good:
             out.append("<p class='green'>✔ " + "<br>✔ ".join(esc(g) for g in o.good) + "</p>")
         if o.reasons:
@@ -522,7 +537,8 @@ class MainWindow(QMainWindow):
                    width=90),
             Column("Item", lambda l: l.op.name.lower(), lambda l: l.op.name, width=270, bold=True),
             Column("Amount now", lambda l: l.units, lambda l: f"{l.units}" + (" crafts" if l.op.method == "Craft" else ""),
-                   align="right"),
+                   align="right", tip=lambda l: "Up to a few days of sales at once: good chances don't show up every day, "
+                                                "so holding stock keeps you selling"),
             Column("Spend now", lambda l: l.capital, lambda l: kinah(l.capital), align="right"),
             Column("List as", lambda l: l.op.lot, lambda l: f"lots of {l.op.lot}", align="right", width=90),
             Column("Sell at", lambda l: l.op.sell_price, lambda l: kinah(l.op.sell_price), align="right"),
@@ -1139,8 +1155,10 @@ class MainWindow(QMainWindow):
                 k.set("—", "press Refresh")
             return
         ops = a.ops
-        best = max(ops, key=lambda o: o.profit_day, default=None)
-        self.kpi_best.set("+" + short(best.profit_day) if best else "—", best.name if best else "nothing profitable")
+        shown = [o for o in ops if o.risk in self.settings.risks]
+        best = max(shown, key=lambda o: o.real_profit_day, default=None)
+        self.kpi_best.set("+" + short(best.real_profit_day) if best else "—",
+                          best.name if best else "nothing in your risk levels")
         safe = [o for o in ops if o.risk == "Safe"]
         self.kpi_safe.set(str(len(safe)), f"of {len(ops)} opportunities")
         fast = [o for o in ops if o.fast]
@@ -1234,6 +1252,7 @@ class MainWindow(QMainWindow):
         self._update_banner()
         self._update_kpis()
         self._supply_refresh_table()
+        self.weekly_label.setText("WEEKLY CYCLE  ·  " + supply_mod.weekly_tip())
 
     def closeEvent(self, event):
         if self._thread is not None:

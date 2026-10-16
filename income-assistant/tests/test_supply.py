@@ -19,3 +19,12 @@ def test_apply_boosts_demand_only_while_active():
     assert st.sales_per_day == 10 * supply.DEMAND_BOOST and st.supply_kind == "Weekly"
     st2 = ItemStats(key="1", name="Odyle", ask=100, listings=20, sales_per_day=10)
     assert supply.apply({"1": st2}, reqs, now=8 * 86400.0) == 0 and st2.sales_per_day == 10
+
+
+def test_weekly_tip_follows_the_reset_cycle():
+    import datetime
+    base = datetime.datetime(2026, 10, 12, 12, 0)  # a Monday
+    tips = [supply.weekly_tip((base + datetime.timedelta(days=d)).timestamp()) for d in range(7)]
+    assert "in 2 days" in tips[0] and "in 1 day" in tips[1]
+    assert "reset day" in tips[2] and "after the weekly reset" in tips[3]
+    assert all(t for t in tips)

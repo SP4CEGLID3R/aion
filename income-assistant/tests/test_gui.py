@@ -129,6 +129,8 @@ def test_window_end_to_end(app, engine, settings, fake, tmp_path):
     if out:
         for lv in win.level_spins.values():
             lv.setValue(60)
+        for r, cb in win.risk_boxes.items():
+            cb.setChecked(r != "Risky")
         win.recalculate()
         win.resize(1440, 900)
         for i, name in enumerate(["best", "plan", "craft", "market", "supply", "settings"]):

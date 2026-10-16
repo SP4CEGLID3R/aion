@@ -31,12 +31,14 @@ import random
 import statistics
 import sys
 import tempfile
+from dataclasses import dataclass
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from aion_income.engine import Engine, MarketData, Settings  # noqa: E402
 from aion_income.opportunities import LISTING_MINUTES, LISTING_SLOTS  # noqa: E402
-from aion_income.planner import OVERHEAD_MINUTES, make_plan  # noqa: E402
+from aion_income.opportunities import CALIBRATION  # noqa: E402
+from aion_income.planner import MAX_SHARE, OVERHEAD_MINUTES, make_plan  # noqa: E402
 from aion_income.recipes import _load_json, book_from_compact  # noqa: E402
 
 PEAK_TRADE_SHARE = 0.55   # share of a day's trades in the busiest 8 hours
@@ -82,12 +84,45 @@ def poisson(rng, lam):
         k += 1
 
 
+@dataclass
+class Strategy:
+    """Which of the app's suggestions to follow."""
+    name: str = "app default"
+    risks: tuple = ("Safe", "Moderate")
+    methods: tuple = ("Craft", "Resell")
+    min_roi: float = 0.0
+    max_roi: float = float("inf")
+    min_market_per_day: float = 0.0
+    exclude: tuple = ()          # skip suggestions with a warning containing any of these
+    allow_risky_if_only: tuple = ()  # Risky allowed when every warning matches one of these
+    calibration: tuple | None = CALIBRATION  # rank by realistic profit (A, B); None = raw prediction
+    max_share: float = MAX_SHARE     # most of the budget one item may take
+    batch_days: float = 3.0          # buy this many days of sales at once (the app's 3-day plan)
+    sequential: bool = False         # replay real days in order from a random start (keeps real trends)
+    weekly_timing: bool = False      # stock up Mon-Wed before the weekly reset, buy little Thu-Sun
+
+    def accept(self, op) -> bool:
+        if op.method not in self.methods or not (self.min_roi <= op.roi <= self.max_roi):
+            return False
+        if (op.market_per_day or 0) < self.min_market_per_day:
+            return False
+        if any(x in r for r in op.reasons for x in self.exclude):
+            return False
+        if op.risk in self.risks:
+            return True
+        if op.risk == "Risky" and self.allow_risky_if_only:
+            return all(any(x in r for x in self.allow_risky_if_only) for r in op.reasons)
+        return False
+
+
 class Market:
     """Pre-computed app analyses of every usable real day."""
 
     def __init__(self, hist, settings, volume=1.0):
         snaps = sorted(hist["snapshots"], key=lambda s: s["ts"])
         sales = hist.get("kaisinel_sales") or {}
+        server = hist.get("server") or SERVER
+        self.server = server
         book = book_from_compact(_load_json("recipes.json"), "bundled")
         self.engine = Engine(tempfile.mkdtemp(), book=book)
         series = {}
@@ -99,11 +134,13 @@ class Market:
                 k = str(r["item_key"])
                 if k in sales:
                     r["units_sold"] = int(sales[k]["sold28"] * volume)
+                elif r.get("units_sold"):
+                    r["units_sold"] = int(r["units_sold"] * volume)
                 rows.append(r)
                 if r.get("price"):
                     series.setdefault(k, []).append((s["ts"], r["price"], r.get("listings") or 0))
             window = {k: list(v) for k, v in series.items()}  # everything seen so far, like the app's history
-            data = MarketData(server=SERVER, rows=rows, fetched_at=s["ts"], snapshots=window)
+            data = MarketData(server=server, rows=rows, fetched_at=s["ts"], snapshots=window)
             self.analyses.append((s["ts"], self.engine.analyse(data, settings)))
         # a "day" = a real snapshot with enough history behind it and one ~24 h later
         self.days = []
@@ -118,37 +155,76 @@ class Market:
             raise SystemExit("not enough history: need snapshots spanning at least ~2 days")
 
 
-def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, risks, keep):
+def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, risks, keep,
+             strategy: Strategy | None = None, trades: list | None = None):
+    """One 50-day life. Returns (net worth per day, daily log); appends every trade to `trades`."""
+    strategy = strategy or Strategy(risks=tuple(risks))
     cash = float(start)
-    inv: dict[str, float] = {}       # item key -> units waiting to be sold
+    inv: dict[str, list] = {}        # item key -> FIFO lots [units, trade index]
     lot_of: dict[str, int] = {}
     rate_of: dict[str, float] = {}   # item key -> market units per day
+    my_trades = []
     worth, log = [], []
     minutes_cap = hours * 60 - OVERHEAD_MINUTES
-    for _ in range(days):
-        i, j = rng.choice(mkt.days)
+
+    def held(k):
+        return sum(u for u, _ in inv.get(k, []))
+
+    def add(k, units, tid):
+        if units > 0:
+            inv.setdefault(k, []).append([units, tid])
+
+    def take(k, units, unit_price):
+        lots = inv.get(k, [])
+        while units > 1e-9 and lots:
+            u = min(units, lots[0][0])
+            my_trades[lots[0][1]]["revenue"] += u * unit_price
+            my_trades[lots[0][1]]["sold"] += u
+            lots[0][0] -= u
+            units -= u
+            if lots[0][0] <= 1e-9:
+                lots.pop(0)
+
+    seq_start = rng.randrange(len(mkt.days))
+    for day in range(days):
+        if strategy.sequential:
+            i, j = mkt.days[(seq_start + day) % len(mkt.days)]
+        else:
+            i, j = rng.choice(mkt.days)
         a, nxt = mkt.analyses[i][1], mkt.analyses[j][1]
-        ops = [o for o in a.ops if o.risk in risks]
-        plan = make_plan(ops, cash, horizon=1.0, play_hours=hours)
+        ops = [o for o in a.ops if strategy.accept(o)]
+        batch = strategy.batch_days
+        if strategy.weekly_timing:
+            import datetime as _dt
+            wd = _dt.datetime.fromtimestamp(mkt.analyses[i][0], _dt.timezone.utc).weekday()
+            batch = 5.0 if wd in (0, 1, 2) else 1.0
+        plan = make_plan(ops, cash, horizon=1.0, play_hours=hours, calibration=strategy.calibration,
+                         max_share=strategy.max_share, batch_days=batch)
         craft_minutes = 0.0
         bought = 0.0
         for line in plan.lines:
             op = line.op
             key = op.stats.key
-            have = inv.get(key, 0.0)
             units = line.units
+            have = held(key)
             if have > 0:  # already holding stock of this item: buy less
                 units = max(0, units - int(have / max(op.outputs_per_unit, 1e-9)))
+            if op.cost_unit > cash:
+                continue
+            units = min(units, int(cash // op.cost_unit))
             if units <= 0:
                 continue
             cost = units * op.cost_unit
-            if cost > cash:
-                units = int(cash // op.cost_unit)
-                cost = units * op.cost_unit
-            if units <= 0:
-                continue
             cash -= cost
             bought += cost
+            tid = len(my_trades)
+            my_trades.append({"day": day, "method": op.method, "risk": op.risk, "name": op.name, "key": key,
+                              "section": op.stats.section, "reasons": list(op.reasons), "cost": cost,
+                              "units": units, "pred_profit": op.profit_unit * units, "pred_roi": op.roi,
+                              "pred_sell": op.sell_price, "market_per_day": op.market_per_day or 0.0,
+                              "lot": op.lot, "revenue": 0.0, "sold": 0.0, "out": 0.0,
+                              "volatility": op.stats.volatility, "trend_short": op.stats.trend_short,
+                              "listings": op.stats.listings, "realized_price": None})
             lot_of[key] = op.lot
             rate_of[key] = op.market_per_day or 0.0
             if op.method == "Craft":
@@ -161,47 +237,66 @@ def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, 
                     combo = sum(1 for _ in range(succ) if rng.random() < p)
                     if combo:
                         cs = a.stats.get(c.combo_key)
-                        inv[c.combo_key] = inv.get(c.combo_key, 0) + combo
+                        add(c.combo_key, combo, tid)
                         lot_of[c.combo_key] = 1
                         rate_of[c.combo_key] = (cs.sales_per_day or 0.0) if cs else 0.0
-                inv[key] = inv.get(key, 0) + (succ - combo) * c.recipe.out_qty
+                out = (succ - combo) * c.recipe.out_qty
+                add(key, out, tid)
+                my_trades[tid]["out"] = out + combo
+                my_trades[tid]["success_rate"] = c.success
+                my_trades[tid]["successes"] = succ
             else:
-                inv[key] = inv.get(key, 0) + units
+                add(key, units, tid)
+                my_trades[tid]["out"] = units
 
         # selling: up to 10 items listed, most valuable flow first
         def price(k):
             st = nxt.stats.get(k) or a.stats.get(k)
             return (st.sell_price or 0.0) if st else 0.0
-        listed = sorted((k for k, u in inv.items() if u > 0), key=lambda k: -price(k) * min(inv[k], rate_of.get(k, 0)))
+        listed = sorted((k for k in inv if held(k) > 0), key=lambda k: -price(k) * min(held(k), rate_of.get(k, 0)))
         listed = listed[:LISTING_SLOTS]
-        relists_left = max(0, int((minutes_cap - craft_minutes) / LISTING_MINUTES)) - len(listed)  # first listing
-        relists_left = max(0, relists_left)
+        relists_left = max(0, int((minutes_cap - craft_minutes) / LISTING_MINUTES) - len(listed))
         revenue = 0.0
         for k in listed:
             lot = max(1, lot_of.get(k, 1))
+            stock = held(k)
             lam_on = rate_of.get(k, 0.0) * PEAK_TRADE_SHARE * online_share / lot
-            n_on = min(poisson(rng, lam_on), relists_left + 1, math.ceil(inv[k] / lot))
+            n_on = min(poisson(rng, lam_on), relists_left + 1, math.ceil(stock / lot))
             relists_left -= max(0, n_on - 1)
-            units = min(inv[k], n_on * lot)
-            inv[k] -= units
+            units = min(stock, n_on * lot)
+            stock -= units
             # end of session: relist (if stock and time) and maybe sell once while offline
-            if inv[k] > 0 and (n_on == 0 or relists_left > 0):
+            if stock > 0 and (n_on == 0 or relists_left > 0):
                 if n_on > 0:
                     relists_left -= 1
                 lam_off = rate_of.get(k, 0.0) * (1 - PEAK_TRADE_SHARE) * offline_share / lot
                 if rng.random() < 1 - math.exp(-lam_off):
-                    u2 = min(inv[k], lot)
-                    inv[k] -= u2
-                    units += u2
-            revenue += units * price(k) * keep
+                    units += min(stock, lot)
+            if units > 0:
+                pr = price(k) * keep
+                take(k, units, pr)
+                revenue += units * pr
         cash += revenue
         stock_value = 0.0
-        for k, u in inv.items():
+        for k in inv:
             st = nxt.stats.get(k)
+            u = held(k)
             if u > 0 and st and st.sell_pessimistic:
                 stock_value += u * st.sell_pessimistic * keep
         worth.append(cash + stock_value)
-        log.append({"bought": bought, "revenue": revenue, "lines": len(plan.lines), "cash": cash, "stock": stock_value})
+        log.append({"bought": bought, "revenue": revenue, "lines": len(plan.lines), "cash": cash,
+                    "stock": stock_value, "listed": len(listed), "ops": len(ops)})
+    # value whatever is still unsold at the last day's low-end price
+    last = mkt.analyses[mkt.days[-1][1]][1]
+    for k, lots in inv.items():
+        st = last.stats.get(k)
+        val = (st.sell_pessimistic or 0.0) * keep if st else 0.0
+        for u, tid in lots:
+            my_trades[tid]["unsold_value"] = my_trades[tid].get("unsold_value", 0.0) + u * val
+    for t in my_trades:
+        t["pnl"] = t["revenue"] + t.get("unsold_value", 0.0) - t["cost"]
+    if trades is not None:
+        trades.extend(my_trades)
     return worth, log
 
 

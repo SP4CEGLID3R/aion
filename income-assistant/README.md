@@ -77,23 +77,67 @@ because those buyers disappear when the request ends.
   price is expected to keep falling. Without enough history it assumes only 30%
   of a dip recovers.
 
-## 50-day simulation
+## What 20,000 simulations taught it
 
-`tools/simulate.py` follows the app's plan every day: real prices replayed from a
-price history, craft success and Splendent combos rolled, buyers arriving at
-random, 10 listing slots, 5 minutes per listing, and leftovers carried over.
+`tools/simulate.py` follows the app's plan every day: real prices replayed (in random
+day order and in real order), craft success and Splendent combos rolled, buyers
+arriving at random, 10 listing slots, 5 minutes per listing, leftovers carried over.
+It was run on the real price history of five servers (Siel, Nezekan, Kaisinel,
+Israphel, Zikel; 6–16 Oct 2026). Kaisinel publishes real sales; the others borrow
+Kaisinel's sales volumes.
 
-![50-day simulation](docs/simulation.png)
+![20,000 runs](docs/study20k.png)
 
-The run above starts with 20M and plays 8 h/day at peak. It used real Israphel
-(NA East, Asmodian) prices from 6–16 Oct 2026, a falling launch market, replayed
-for 50 days, with Kaisinel's real sales volumes, because Lumiel publishes none.
-Median result for an all-professions level-60 crafter following the Safe +
-Moderate plan: **≈ +8M in 50 days (≈ 160K/day), 10–90% range 23–33M, 1% of runs
-ended below 20M.** Adding Risky suggestions gives about the same median, but 37%
-of runs ended below 20M. Buying cheap listings to resell made nothing, because on
-that data dips almost never recovered within a day. Once you've refreshed for a
-while, run it on your own Lumiel history.
+**First: 50 setups (5 servers × 10 strategies), ~40,000 logged trades.**
+
+* Predicted returns were about 2.5× too high, but in the right order. Trades predicted
+  under 10% lost money; trades predicted 50% made about 30%. The app now shows a
+  **realistic** return (`0.95·ln(1+predicted) − 0.07`), fitted on four servers and
+  checked on the fifth.
+* Only two warnings really predicted losses: *loses money if the price falls to its
+  recent low* and *only profitable when the Splendent combo hits*. Those, and thin
+  margins, are now **Risky**. Big price swings alone no longer are; those trades
+  still paid.
+* Buying cheap listings to resell rarely worked: on this data, dips seldom
+  recovered within a day.
+
+**Then: rules picked on four servers and tested on the fifth.**
+
+* Ranking by realistic profit and **putting at most 15% of the budget into one
+  item** removed nearly all losing runs.
+* **Holding several days of stock** was the biggest gain: good chances don't come
+  every day, but you can sell every day. That held in real-day order too, with
+  prices falling ~3%/day. The default plan is now **7 days, with up to 5 days of
+  stock**.
+
+**Finally: 20,000 runs starting with 30M, 8 h/day.**
+
+| Plan | Median after 50 days | 10–90% of runs | Runs below 30M |
+|---|---|---|---|
+| Previous version | 56M (+0.52M/day) | 45–65M | 4% |
+| New, 3-day plan | 66M (+0.72M/day) | 58–77M | 0% |
+| **New, 7-day plan (default)** | **73M (+0.86M/day)** | **62–88M** | **0%** |
+| New + Risky | 82M (+1.05M/day) | 52–122M | 0%, but dips of ~34% |
+
+The app's realistic return was close to what trades really made, within about 15
+percentage points in each band. The volume engine is crafting materials (wood,
+leather, paper, powder); the best returns came from crafted armour.
+
+**Be careful with these numbers.** On Kaisinel, the one server with its own real
+sales data, the 7-day plan made only about +10M on 30M. On the other servers, where
+sales volumes are borrowed, it made +35–60M. Lumiel will probably land in between.
+The game is new and prices are hard to predict, so refresh often: the app keeps
+re-learning from your own history.
+
+**Weekly supply-request cycle.** On all five servers, crafted items had their biggest
+share of market activity the day after the weekly reset (Wednesday). Crafted items
+were cheapest just before it, and materials rose ~20% right after it. The app shows
+this as a weekly tip on the first page. Timing purchases around it gave smoother
+results in the simulation, but not more profit. With one week of data it's a hint,
+not a rule.
+
+Once you've refreshed for a week or two, run it on your own Lumiel history:
+`python tools/simulate.py "%APPDATA%\\Aion2IncomeAssistant\\history.db" --start 30m`
 
 ## How the numbers are made
 

@@ -50,7 +50,7 @@ def test_full_refresh(engine, settings, fake):
     assert a.data.snapshot_count == 1
     # every profit is real money after tax, and sorted by profit per day
     assert all(o.profit_unit > 0 for o in a.ops)
-    days = [o.profit_day for o in a.ops]
+    days = [o.real_profit_day for o in a.ops]
     assert days == sorted(days, reverse=True)
     assert all(o.risk in RISK_ORDER for o in a.ops)
     # never built on low-stock items

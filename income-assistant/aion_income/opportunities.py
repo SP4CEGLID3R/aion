@@ -17,6 +17,16 @@ from .crafting import CraftContext, CraftResult, batch_loss_probability
 from .pricing import MIN_HISTORY_POINTS, ItemStats
 
 SAFE, MODERATE, RISKY = "Safe", "Moderate", "Risky"
+
+# Predicted returns are optimistic: in simulations on real price history of five servers,
+# trades realised far less than predicted, but in the same order (a trade predicted at +100%
+# realised about +59%, +50% about +31%, under +10% about nothing). realistic = A*ln(1+predicted) + B.
+CALIBRATION = (0.95, -0.07)
+
+
+def realistic_roi(pred_roi: float, calibration=CALIBRATION) -> float:
+    a, b = calibration
+    return a * math.log1p(max(pred_roi, -0.99)) + b
 RISK_ORDER = {SAFE: 0, MODERATE: 1, RISKY: 2}
 
 MARKET_SHARE = 0.3      # share of an item's daily sales you can expect to win as one more seller
@@ -84,6 +94,19 @@ class Opportunity:
         return self.profit_unit / self.cost_unit if self.cost_unit > 0 else 0.0
 
     @property
+    def real_roi(self) -> float:
+        """What trades like this really returned in simulations (see CALIBRATION)."""
+        return realistic_roi(self.roi)
+
+    @property
+    def real_profit_unit(self) -> float:
+        return self.cost_unit * self.real_roi
+
+    @property
+    def real_profit_day(self) -> float:
+        return self.real_profit_unit * self.your_per_day
+
+    @property
     def profit_day(self) -> float:
         return self.profit_unit * self.your_per_day
 
@@ -138,6 +161,16 @@ def _supply_notes(st: ItemStats, reasons: list, good: list):
         good.append(f"needed for a {st.supply_kind.lower()} supply request: extra buyers for {left / 24:.1f} more days")
 
 
+# Learned from ~40,000 simulated trades on five servers' real price history:
+#  - "loses money if the price falls to its recent low" and "only profitable when the
+#    Splendent combo hits" really lost money or barely broke even -> Risky
+#  - predicted returns under ~10% lost money -> Risky
+#  - big price swings, falling prices and failed-craft risk still paid on average -> not Risky alone
+AVOID = ("loses money if the price falls", "only profitable when the Splendent combo hits")
+MIN_PRED_ROI = 0.10
+SAFE_REAL_ROI = 0.15
+
+
 def classify(op: Opportunity, st: ItemStats, extra_risky: list, extra_safe_ok: bool) -> None:
     reasons, good = op.reasons, op.good
     _sales_reasons(st, reasons, good)
@@ -150,20 +183,20 @@ def classify(op: Opportunity, st: ItemStats, extra_risky: list, extra_safe_ok: b
         reasons.append(f"slow: {speed_text(op.sell_days)} to sell")
     if st.history_points < MIN_HISTORY_POINTS and not st.units_sold_28d:
         reasons.append("little price history")
+    if op.roi < MIN_PRED_ROI:
+        reasons.append(f"thin margin (+{op.roi:.0%} predicted): trades like this lost money in simulations")
     reasons.extend(extra_risky)
 
-    hard = (st.sales_per_day is None or (st.volatility or 0) > 0.35
-            or (op.profit_pess_unit < 0 and op.profit_pess_unit < -0.3 * op.profit_unit)
-            or (op.sell_days or 99) > 7 or bool(extra_risky))
+    hard = (st.sales_per_day is None or (op.sell_days or 99) > 7 or op.roi < MIN_PRED_ROI
+            or any(a in r for r in reasons for a in AVOID))
     if hard:
         op.risk = RISKY
         return
-    safe = (op.profit_pess_unit > 0 and (st.sales_per_day or 0) >= 2
-            and st.volatility is not None and st.volatility <= 0.2
+    safe = (op.real_roi >= SAFE_REAL_ROI and (st.sales_per_day or 0) >= 2
             and (st.history_points >= 24 or st.units_sold_28d > 0)
             and st.listings >= 5 and extra_safe_ok and (op.sell_days or 99) <= 3)
     if safe:
-        good.append("stays profitable at the low end of recent prices")
+        good.append(f"realistic return +{op.real_roi:.0%} (after the usual gap between predicted and real)")
     op.risk = SAFE if safe else MODERATE
 
 
@@ -245,5 +278,5 @@ def all_opportunities(ctx: CraftContext, crafts: list[CraftResult]) -> list[Oppo
         op = resell_opportunity(st, ctx.keep)
         if op:
             ops.append(op)
-    ops.sort(key=lambda o: o.profit_day, reverse=True)
+    ops.sort(key=lambda o: o.real_profit_day, reverse=True)
     return ops

@@ -19,10 +19,11 @@ def test_plan_never_exceeds_budget():
 
 
 def test_fast_small_margin_beats_slow_big_margin():
-    fast = op("fast", 100_000, 8_000, per_day=20)     # 8% but sells 20/day
+    fast = op("fast", 100_000, 15_000, per_day=20)    # 15% but sells 20/day
     slow = op("slow", 100_000, 30_000, per_day=0.2)   # 30% but one every 5 days
-    p = make_plan([slow, fast], 2_000_000, 3)
-    assert p.lines[0].op.name == "fast"
+    p = make_plan([slow, fast], 20_000_000, 3)
+    by = {l.op.name: l.profit for l in p.lines}
+    assert by["fast"] > 10 * by.get("slow", 0)   # the fast seller earns far more over the period
     assert p.profit > 30_000
 
 
@@ -45,7 +46,7 @@ def test_holding_tiers_realistic_and_increasing():
 
 
 def test_holding_tiers_capped_for_huge_markets():
-    ops = [op(f"i{i}", 5_000_000, 600_000, 50) for i in range(50)]
+    ops = [op(f"i{i}", 2_000_000, 600_000, 50) for i in range(50)]
     assert max(t.amount for t in holding_tiers(ops, 3)) <= HOLD_CAP
 
 
@@ -70,7 +71,8 @@ def test_volatile_or_unknown_speed_is_risky():
                    sales_per_day=None, sales_hours=0, volatility=0.05, pessimistic=1400, reversion=1.0)
     assert resell_opportunity(st, 0.88) is None or resell_opportunity(st, 0.88).risk == RISKY
     st.sales_per_day, st.sales_hours, st.volatility = 30, 24, 0.5
-    assert resell_opportunity(st, 0.88).risk == RISKY
+    o = resell_opportunity(st, 0.88)  # big swings are shown, but alone they didn't lose money in simulations
+    assert o.risk != RISKY and any("swings" in r for r in o.reasons)
     st.volatility = 0.05
     assert resell_opportunity(st, 0.88).risk != SAFE  # Safe needs proof the price isn't falling
     st.trend_short = 0.0
@@ -114,3 +116,27 @@ def test_lots_and_listing_time():
     assert abs(o.minutes_per_day - 30) < 1e-9
     o.stats.section = "weapons"               # gear: one item per listing
     assert o.lot == 1 and o.listings_per_day == 60
+
+
+def test_learned_rules_thin_margins_and_avoid_warnings_are_risky():
+    st = ItemStats(key="k", name="X", ask=1000, listings=40, ref=1110, ref_basis="t", history_points=48,
+                   sales_per_day=30, sales_hours=24, volatility=0.05, pessimistic=1100, trend_short=0.0, reversion=1.0)
+    o = resell_opportunity(st, 0.95)          # ~5% predicted: such trades lost money in simulations
+    assert o.risk == RISKY and any("thin margin" in r for r in o.reasons)
+
+
+def test_plan_caps_each_item_and_stocks_a_few_days():
+    a = op("a", 1000, 400, per_day=1000)       # could absorb far more than the budget
+    b = op("b", 1000, 300, per_day=1000)
+    p = make_plan([a, b], 1_000_000, horizon=3)
+    assert all(l.capital <= 0.15 * 1_000_000 + 1e-6 for l in p.lines)
+    small = op("c", 1000, 400, per_day=10)
+    p3 = make_plan([small], 1e9, horizon=3)
+    assert p3.lines[0].units == 30            # three days of sales at once
+    assert make_plan([small], 1e9, horizon=1).lines[0].units == 10
+
+
+def test_realistic_roi_curve():
+    from aion_income.opportunities import realistic_roi
+    assert realistic_roi(0.10) < 0.03 and abs(realistic_roi(1.0) - 0.59) < 0.02
+    assert realistic_roi(0.5) < 0.5 and realistic_roi(2.0) < 2.0

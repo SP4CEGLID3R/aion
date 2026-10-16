@@ -9,7 +9,12 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .opportunities import LISTING_SLOTS, Opportunity
+from .opportunities import CALIBRATION, LISTING_SLOTS, Opportunity, realistic_roi
+
+# Defaults learned from 50-day simulations on five servers (see tools/simulate.py):
+MAX_SHARE = 0.15     # never more than 15% of the budget in one item: removed nearly all losing runs
+MAX_STOCK_DAYS = 5   # buying several days of sales when an opportunity is there keeps selling going
+                     # on days without one; 3 days (default plan) raised the median result ~25%
 
 OVERHEAD_MINUTES = 20  # refreshing, walking to the market, buying ingredients
 
@@ -45,17 +50,26 @@ class Plan:
         return self.budget - self.capital
 
 
-def _terms(op: Opportunity, horizon: float):
-    """(units held at once, capital, profit over horizon) for running op at full speed."""
-    if op.your_per_day <= 0 or op.cost_unit <= 0 or op.profit_unit <= 0:
+def _terms(op: Opportunity, horizon: float, calibration=None, batch_days: float = 1.0):
+    """(units held at once, capital, profit over horizon) for running op at full speed.
+    With a calibration, profit is what such trades really returned, not the raw prediction;
+    a calibration can be (A, B) or a function op -> realistic ROI."""
+    if calibration is None:
+        profit_unit = op.profit_unit
+    elif callable(calibration):
+        profit_unit = op.cost_unit * calibration(op)
+    else:
+        profit_unit = op.cost_unit * realistic_roi(op.roi, calibration)
+    if op.your_per_day <= 0 or op.cost_unit <= 0 or profit_unit <= 0:
         return None
-    units = max(1, math.ceil(op.your_per_day * min(horizon, 1.0)))
+    units = max(1, math.ceil(op.your_per_day * min(horizon, 1.0) * batch_days))
     sold = op.your_per_day * horizon
-    return units, units * op.cost_unit, op.profit_unit * sold, sold
+    return units, units * op.cost_unit, profit_unit * sold, sold
 
 
-def _greedy(cands, budget, horizon, minutes_cap, limit):
+def _greedy(cands, budget, horizon, minutes_cap, limit, max_share=1.0):
     lines, left, minutes_left = [], budget, minutes_cap
+    line_cap = budget * max_share
     used_keys = set()
     for op, units, capital, profit, sold in cands:
         if left < op.cost_unit or minutes_left <= 0:
@@ -66,7 +80,8 @@ def _greedy(cands, budget, horizon, minutes_cap, limit):
         frac = 1.0
         if op.minutes_per_day > minutes_left:
             frac = minutes_left / op.minutes_per_day  # not enough time to list all of it
-        take = min(int(math.floor(units * frac)) or 1, units, int(left // op.cost_unit))
+        take = min(int(math.floor(units * frac)) or 1, units, int(left // op.cost_unit),
+                   int(line_cap // op.cost_unit))  # don't put too much into one item
         if take <= 0:
             continue
         frac = take / units
@@ -80,19 +95,22 @@ def _greedy(cands, budget, horizon, minutes_cap, limit):
 
 
 def make_plan(ops: list[Opportunity], budget: float, horizon: float = 3.0, limit: int = 25,
-              play_hours: float = 8.0) -> Plan:
+              play_hours: float = 8.0, calibration=CALIBRATION, max_share: float = MAX_SHARE,
+              batch_days: float | None = None) -> Plan:
     """Best use of a budget within the market's limits: at most 10 items listed at once and
     5 minutes per listing, so your playing time caps how much you can sell per day."""
     minutes_cap = max(0.0, play_hours * 60 - OVERHEAD_MINUTES)
+    if batch_days is None:
+        batch_days = min(max(horizon, 1.0), MAX_STOCK_DAYS)
     cands = []
     for op in ops:
-        t = _terms(op, horizon)
+        t = _terms(op, horizon, calibration, batch_days)
         if t and op.minutes_per_day > 0:
             cands.append((op,) + t)
     best = []
     # capital-bound and time-bound orderings; keep whichever earns more
     for key in (lambda c: c[3] / c[2], lambda c: c[3] / c[0].minutes_per_day):
-        lines = _greedy(sorted(cands, key=key, reverse=True), budget, horizon, minutes_cap, limit)
+        lines = _greedy(sorted(cands, key=key, reverse=True), budget, horizon, minutes_cap, limit, max_share)
         if sum(l.profit for l in lines) > sum(l.profit for l in best):
             best = lines
     return Plan(best, budget, horizon, sum(l.capital for l in best), sum(l.profit for l in best),

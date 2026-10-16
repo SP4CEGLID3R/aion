@@ -74,3 +74,29 @@ def apply(stats: dict, reqs: list[SupplyRequest], now: float | None = None) -> i
         st.flags.append(f"in a {r.kind.lower()} supply request ({when} left)")
         n += 1
     return n
+
+
+WEEKLY_RESET_WEEKDAY = 2  # Wednesday
+
+
+def weekly_tip(now: float | None = None) -> str:
+    """Where we are in the weekly supply-request cycle, and what the price history showed.
+
+    In 10 days of data from five servers (one clean weekly reset), crafted items were
+    cheapest just before the reset and sold best the day after; materials rose ~20%
+    right after it. One week is a hint, not a law.
+    """
+    import datetime as _dt
+    wd = _dt.datetime.fromtimestamp(time.time() if now is None else now).weekday()
+    days_to_reset = (WEEKLY_RESET_WEEKDAY - wd) % 7
+    if days_to_reset in (1, 2):
+        return ("Weekly reset in %d day%s: crafted items and materials were cheapest just before it. "
+                "Good time to buy materials and craft, then sell after the reset." % (days_to_reset, "" if days_to_reset == 1 else "s"))
+    if days_to_reset == 0:
+        return ("Weekly reset day: new supply requests. Crafted items got busiest the day after, and materials "
+                "rose ~20%. Hold crafted stock for tomorrow, sell spare materials.")
+    if wd == (WEEKLY_RESET_WEEKDAY + 1) % 7:
+        return ("Day after the weekly reset: crafted items sold best on this day, and materials were ~20% pricier. "
+                "List crafted stock now.")
+    return ("Mid-week: prices drifted down toward the next reset. Sell steadily, and buy materials closer to "
+            "the reset.")
