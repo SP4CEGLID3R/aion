@@ -18,10 +18,12 @@ from .pricing import MIN_HISTORY_POINTS, ItemStats
 
 SAFE, MODERATE, RISKY = "Safe", "Moderate", "Risky"
 
-# Predicted returns are optimistic: in simulations on real price history of five servers,
-# trades realised far less than predicted, but in the same order (a trade predicted at +100%
-# realised about +59%, +50% about +31%, under +10% about nothing). realistic = A*ln(1+predicted) + B.
-CALIBRATION = (0.95, -0.07)
+# Predicted returns are optimistic: in simulations on real price history, trades realised less
+# than predicted, but in the same order. realistic = A*ln(1+predicted) + B, fitted on 77,375
+# simulated trades on the EU servers Kaisinel and Zikel (a trade predicted at +100% realised about
+# +76%, +50% about +41%, under +10% about nothing). NA servers realised a bit less (A 1.06, B -0.12)
+# but the ranking of trades, which is what the plan uses, came out the same with either fit.
+CALIBRATION = (1.23, -0.09)
 
 
 def realistic_roi(pred_roi: float, calibration=CALIBRATION) -> float:
@@ -161,12 +163,12 @@ def _supply_notes(st: ItemStats, reasons: list, good: list):
         good.append(f"needed for a {st.supply_kind.lower()} supply request: extra buyers for {left / 24:.1f} more days")
 
 
-# Learned from 1,002,240 simulated 50-day runs (432 strategies x 5 servers x 2 crafting levels x
-# 2 replay modes), with the winner picked on four servers and checked on the fifth:
+# Learned from two million-run searches (999,360 runs on the EU servers Kaisinel and Zikel, and
+# 1,002,240 runs on five servers incl. NA); only rules that held in both regions are kept:
 #  - trades predicted under +20% are not worth a listing slot -> Risky
-#  - "loses money if the price falls to its recent low" made ~+1% for a predicted ~+25% -> Risky
-#  - "only profitable when the Splendent combo hits" swings more but really made ~+33% once the
-#    +20% bar is met -> Moderate (never Safe)
+#  - "loses money if the price falls to its recent low" made about nothing (EU -8%, NA -2%) -> Risky
+#  - "only profitable when the Splendent combo hits" swings more, but skipping those trades cost
+#    16M in EU and 8M in NA over 50 days -> Moderate (never Safe)
 #  - big price swings, falling prices and failed-craft risk alone don't make a trade worse
 AVOID = ("loses money if the price falls",)
 SWINGY = ("only profitable when the Splendent combo hits",)

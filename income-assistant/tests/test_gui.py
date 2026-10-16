@@ -131,6 +131,8 @@ def test_window_end_to_end(app, engine, settings, fake, tmp_path):
             lv.setValue(60)
         for r, cb in win.risk_boxes.items():
             cb.setChecked(r != "Risky")
+        win.budget_edit.setText("15m")
+        win.budget_edit.editingFinished.emit()
         win.recalculate()
         win.resize(1440, 900)
         for i, name in enumerate(["best", "plan", "craft", "market", "supply", "settings"]):

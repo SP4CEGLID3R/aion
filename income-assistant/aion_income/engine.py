@@ -41,7 +41,7 @@ class Settings:
     overrides: dict = field(default_factory=dict)  # recipe id -> your in-game success %
     supply_requests: list = field(default_factory=list)  # supply.SupplyRequest you typed in
     budget: float = 5_000_000
-    horizon: float = 7.0   # learned: a 7-day plan (up to 7 days of stock) earned most in simulations
+    horizon: float = 10.0  # learned: a 10-day plan (up to 10 days of stock) earned most in EU and NA simulations
     play_hours: float = 8.0
     risks: list = field(default_factory=lambda: ["Safe", "Moderate"])
     server_name: str = "Lumiel"

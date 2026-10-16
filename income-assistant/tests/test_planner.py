@@ -138,17 +138,18 @@ def test_plan_caps_each_item_and_stocks_a_few_days():
 
 def test_realistic_roi_curve():
     from aion_income.opportunities import realistic_roi
-    assert realistic_roi(0.10) < 0.03 and abs(realistic_roi(1.0) - 0.59) < 0.02
+    assert realistic_roi(0.10) < 0.03 and abs(realistic_roi(1.0) - 0.76) < 0.02
     assert realistic_roi(0.5) < 0.5 and realistic_roi(2.0) < 2.0
 
 
 def test_million_run_rules():
     from aion_income.opportunities import MIN_PRED_ROI
     from aion_income.planner import MAX_SHARE, MAX_STOCK_DAYS
-    assert MIN_PRED_ROI == 0.20 and MAX_SHARE == 0.15 and MAX_STOCK_DAYS == 7
+    assert MIN_PRED_ROI == 0.20 and MAX_SHARE == 0.15 and MAX_STOCK_DAYS == 10
     st = ItemStats(key="k", name="X", ask=1000, listings=40, ref=1400, ref_basis="t", history_points=48,
                    sales_per_day=30, sales_hours=24, volatility=0.05, pessimistic=600, trend_short=0.0, reversion=1.0)
     o = resell_opportunity(st, 0.88)       # +23% predicted but loses money at the recent low
     assert o.risk == RISKY and any("loses money" in r for r in o.reasons)
     small = op("c", 1000, 400, per_day=10)
     assert make_plan([small], 1e9, horizon=7).lines[0].units == 70   # a week of sales at once
+    assert make_plan([small], 1e9, horizon=10).lines[0].units == 100  # the default: 10 days of sales

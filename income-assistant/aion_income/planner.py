@@ -11,11 +11,13 @@ from dataclasses import dataclass
 
 from .opportunities import CALIBRATION, LISTING_SLOTS, Opportunity, realistic_roi
 
-# Defaults learned from 1,002,240 simulated 50-day runs on five servers (see tools/simulate.py):
-MAX_SHARE = 0.15     # at most 15% of the budget in one item: nearly the best growth (25% was 1.5%
-                     # higher) with clearly better bad-luck results and smaller dips
-MAX_STOCK_DAYS = 7   # buy up to a week of sales when a good trade is there: good trades don't show up
-                     # every day but you can sell every day (2 days -> 58M, 7 days -> 73M on average)
+# Defaults learned from simulated 50-day runs on EU and NA servers (see tools/simulate.py); both
+# regions agreed on these:
+MAX_SHARE = 0.15     # at most 15% of the budget in one item: 20-25% grew a little faster on average
+                     # but had worse bad-luck results on Kaisinel (EU, real sales) and on NA
+MAX_STOCK_DAYS = 10  # buy up to 10 days of sales when a good trade is there: good trades don't show up
+                     # every day but you can sell every day (EU: 2 days -> 52M, 7 -> 78M, 10 -> 81M;
+                     # NA: 7 -> 102M, 10 -> 107M). Not longer: the price history is only ~10 days
 
 OVERHEAD_MINUTES = 20  # refreshing, walking to the market, buying ingredients
 

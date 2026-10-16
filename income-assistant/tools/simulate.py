@@ -97,7 +97,7 @@ class Strategy:
     allow_risky_if_only: tuple = ()  # Risky allowed when every warning matches one of these
     calibration: tuple | None = CALIBRATION  # rank by realistic profit (A, B); None = raw prediction
     max_share: float = MAX_SHARE     # most of the budget one item may take
-    batch_days: float = 7.0          # buy this many days of sales at once (the app's default 7-day plan)
+    batch_days: float = 10.0         # buy this many days of sales at once (the app's default 10-day plan)
     sequential: bool = False         # replay real days in order from a random start (keeps real trends)
     weekly_timing: bool = False      # stock up Mon-Wed before the weekly reset, buy little Thu-Sun
 

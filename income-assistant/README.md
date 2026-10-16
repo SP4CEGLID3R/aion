@@ -1,6 +1,6 @@
-# Aion 2 Income Assistant (Lumiel)
+# Aion 2 Income Assistant (Lumiel, EU)
 
-A Windows 11 desktop app that reads the **Lumiel** market from
+A Windows 11 desktop app that reads the **Lumiel (Europe)** market from
 [aion2.exchange](https://aion2.exchange) and tells you what makes the most kinah:
 which recipes to craft, which underpriced listings to buy and resell, how much
 to buy, how fast it sells, and how risky it is.
@@ -40,6 +40,8 @@ memory or its network traffic.
 
 1. Open **Settings** and enter your crafting levels (0 = you don't have that
    profession). Check the market fees (default: 10% sales tax + 2% listing fee).
+   The server is **Lumiel, region EU** by default. Several regions have a Lumiel,
+   so if you ever play on another one, change *Server* and *Region* there.
 2. Press **Refresh**. Every press downloads the latest Lumiel prices. The
    first one takes about 40 seconds because it loads price history for the
    important items. Later ones take a few seconds.
@@ -48,7 +50,7 @@ memory or its network traffic.
    row for step-by-step instructions: ingredients, where to get each one
    cheapest, what to list at, how many to buy.
 4. **My plan**: type how much kinah you can spend (`5m`, `500k`, …) and how
-   soon you want it sold. You get what to buy or craft, how much to spend
+   soon you want it sold (default 10 days). You get what to buy or craft, how much to spend
    and the expected profit. Below that are three suggested amounts worth
    holding for trading (Low ≤ 5M, Mid ≤ 15M, High ≤ 30M), based on how much
    the market can actually absorb.
@@ -85,68 +87,73 @@ because those buyers disappear when the request ends.
   price is expected to keep falling. Without enough history it assumes only 30%
   of a dip recovers.
 
-## What 1,000,000 simulations taught it
+## What 2,000,000 simulations taught it (EU first, NA as a cross-check)
 
 `tools/simulate.py` follows the app's plan every day: real prices replayed (in random
 day order and in real order), craft success and Splendent combos rolled, buyers
 arriving at random, 10 listing slots, 5 minutes per listing, leftovers carried over.
-It was run on the real price history of five servers (Siel, Nezekan, Kaisinel,
-Israphel, Zikel; 6–16 Oct 2026). Kaisinel publishes real sales; the others borrow
-Kaisinel's sales volumes.
 
-![1,000,000 runs](docs/million.png)
+There is no public price history for EU Lumiel yet, so the EU study uses the two EU
+servers that have it: **Kaisinel** (EU, publishes real sales) and **Zikel** (EU,
+Asmodian like Lumiel; it borrows Kaisinel's sales volumes). The earlier NA study
+(Siel, Nezekan, Israphel, 1,002,240 runs) is the cross-check. **Only rules that held
+in both regions are built in.** Where the regions differ, the app uses the EU value.
 
-**The search:** 432 strategies × 5 servers × crafting level 60/100 × random/real-order
-replay × 116 runs each = **1,002,240 simulated 50-day runs, starting with 30M, 8 h/day**.
-Strategies were ranked by long-run growth (average log of the final kinah, which
-punishes big losses). The winner was picked on four servers and checked on the fifth.
-The same strategy won every time, placing 1st–24th of 432 on the server it hadn't seen.
+![999,360 EU runs](docs/million_eu.png)
 
-What each setting did on average:
+**The EU search:** 360 strategies × Kaisinel/Zikel × crafting level 60/100 ×
+random/real-order replay × 347 runs = **999,360 simulated 50-day runs, starting with
+30M, 8 h/day** (6–16 Oct 2026 prices). Strategies were ranked by long-run growth
+(average log of the final kinah, which punishes big losses).
 
-| Setting | Effect |
-|---|---|
-| Days of stock bought at once | 2 days → 58M · 3 → 64M · 5 → 69M · **7 → 73M** (the biggest lever) |
-| Minimum predicted return | 10% → 66M · **20% → 67M** · 35% → 65M |
-| Most budget in one item | 8% safest · **15% nearly the best growth with better bad-luck results** · 25% highest growth but bigger dips |
-| Swingy-but-profitable trades | allowing them: **+8M** |
-| Skipping falling prices | **−9M** (falling prices aren't a reason to skip) |
-| Crafting only vs crafting + resells | about the same; crafting does almost all the work |
-
-Built into the app as the default:
-
-* **Only trades predicted at +20% or more**; thinner ones are Risky.
-* **"Loses money if the price falls to its recent low" is Risky.** In 103,608 trades
-  it made about +1% for a predicted ~+25%; dropping it raised the median 4.6M.
-* **Combo-luck trades are Moderate.** They swing more but really made about +33%.
-* **At most 15% of the budget per item, and up to a week of stock** (the 7-day plan).
-
-Results with 30M:
-
-| Plan | Median after 50 days | 10–90% of runs | Runs below 30M |
+| Setting | EU | NA | Built in |
 |---|---|---|---|
-| Previous default | 74M (+0.88M/day) | 62–86M | 0% |
-| **Shipped default** | **102M (+1.44M/day)** | **70–136M** | **0%** |
+| Days of stock bought at once | 2 d → 52M · 3 → 57M · 5 → 62M · 7 → 64M (search average); 10 days beat 7 in a follow-up (78 → 81M typical) | 7 → 102M, 10 → 107M | **up to 10 days** (the price history only covers ~10 days, so no longer) |
+| Minimum predicted return | 10% ≈ 20% > 35%; every top strategy used 20% | 20% best | **+20%**, thinner trades are Risky |
+| Most budget in one item | 25% grew ~3M more on average, but on Kaisinel in real order it lost money in 2% of runs (15%: 0.3%) | 15% clearly better bad-luck results | **15%** |
+| "Loses money if the price falls to its recent low" | made −8% | made −2% | **Risky** |
+| Skipping combo-luck trades | **−16M** | −8M | kept, **Moderate** (never Safe) |
+| Skipping swingy trades | −5M | −8M | kept |
+| Skipping gear crafts (armour, weapons, accessories) | 80M → 52M | 106M → 58M | kept: gear plus materials beats either alone |
+| Realistic-return fit | 1.23·ln(1+p) − 0.09 | 1.06·ln(1+p) − 0.12 | **EU fit**; it changed no ranking (58.4M either way), only the numbers shown |
 
-The app's realistic return matches what trades really made: crafts were predicted
-at +39% realistic and made +38.5%. Crafted armour and crafting materials (leather,
-wood, paper) bring in most of the profit.
+What trades really made in EU, by predicted return: under +20% → about −1.5%;
++20–35% → +32%; +35–50% → +42%; +50–100% → +47%; +100–200% → +120%. The app's
+"realistic" columns use this EU fit.
+
+Results with 30M after 50 days (shipped default, same dice for every plan):
+
+| | Median | 10–90% of runs | Runs below 30M |
+|---|---|---|---|
+| EU, previous NA-tuned default | 84.5M | 68–101M | 0.1% |
+| **EU, shipped default** | **86.6M (+1.1M/day)** | **71–105M** | **0%** |
+| · Kaisinel (real sales) | 55.6M (+0.5M/day) | 44–74M | 0% |
+| · Zikel (borrowed volumes) | 113.9M | 99–135M | 0% |
+| NA, same shipped default | 103.8M | 78–156M | 0% |
+
+**Expect Kaisinel-like numbers on Lumiel:** about **+25M on 30M over 50 days**
+(+0.5M/day). Kaisinel is the only server whose sales are real. Zikel and the NA
+servers borrow sales volumes, which may overstate how much sells. The game is new
+and prices are hard to predict, so refresh often: the app keeps re-learning from
+your own history.
 
 **Expect paper dips.** About half your net worth sits in stock, valued at its low-end
-price until it sells. 60% of runs had a dip of 25%+ at some point, mostly around
-day 30–35, and still ended well up. Don't panic-sell stock in a dip.
+price until it sells. Typical runs dip about 22% at some point and still end well up.
+Don't panic-sell stock in a dip.
 
-**Be careful with these numbers.** On Kaisinel, the one server with real sales data,
-the shipped default made about **+25M on 30M (55M)**. On the borrowed-volume servers
-it made +50–85M. Lumiel will probably land in between. The game is new and prices
-are hard to predict, so refresh often: the app keeps re-learning from your own history.
+**How much to keep liquid (EU).** Extra kinah stops paying off quickly. On
+Kaisinel, profit was +22M with 10M, +25M with 15M, and no better with 20–30M. A
+busy day's buying needs about 3.5–4.5M, and about 45% of your trading money is
+cash at any moment. So a **15M trading pot, with at least 5M of it always in cash**,
+is the sweet spot. Up to 20M still helps on busier servers; past 30M it's
+pointless. The *How much kinah is worth holding* cards on **My plan** show the
+same curve for your live market.
 
-**Weekly supply-request cycle.** On all five servers, crafted items had their biggest
-share of market activity the day after the weekly reset (Wednesday). Crafted items
-were cheapest just before it, and materials rose ~20% right after it. The app shows
-this as a weekly tip on the first page. Timing purchases around it gave smoother
-results in the simulation, but not more profit. With one week of data it's a hint,
-not a rule.
+**Weekly supply-request cycle.** In both EU and NA, crafted items were cheapest just
+before the weekly reset (Wednesday) and busiest the day after it (EU: about 1.2–1.3×
+their usual share of activity). The app shows this as a weekly tip on the first page.
+NA also showed materials jumping after the reset, but EU didn't, so the app doesn't
+claim it. With one week of data it's a hint, not a rule.
 
 Once you've refreshed for a week or two, run it on your own Lumiel history:
 `python tools/simulate.py "%APPDATA%\\Aion2IncomeAssistant\\history.db" --start 30m`
@@ -171,8 +178,9 @@ Once you've refreshed for a week or two, run it on your own Lumiel history:
 ## Data sources
 
 * Market data: the public aion2.exchange API (`/api/servers`, `/api/items`,
-  `/api/items/{id}/prices`, `/api/items/{id}/depth`). Lumiel is server 12104
-  (NA East, Asmodian), looked up by name on each refresh.
+  `/api/items/{id}/prices`, `/api/items/{id}/depth`). EU Lumiel is server 12304
+  (Europe, Asmodian), looked up by name and region on each refresh (other Lumiels:
+  NA East 12104, NA West 12204, South America 12404, Asia 12504).
 * Recipes: the gamers4.life crafting database (a copy ships with the app, and
   it re-downloads weekly to pick up patches).
 * NPC shop prices: community guides. The ones marked *estimated* in

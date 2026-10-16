@@ -24,7 +24,7 @@ from . import theme
 from .theme import RISK_COLORS
 from .widgets import Column, KpiCard, PriceChart, kinah, make_table, parse_kinah, pct, selected_row, short
 
-HORIZONS = [("1 day", 1.0), ("3 days", 3.0), ("7 days", 7.0)]
+HORIZONS = [("1 day", 1.0), ("3 days", 3.0), ("7 days", 7.0), ("10 days", 10.0)]
 METHOD_COLORS = {"Craft": theme.BLUE, "Resell": theme.VIOLET}
 
 PAGES = [
@@ -313,8 +313,8 @@ class MainWindow(QMainWindow):
         self.weekly_label = QLabel("WEEKLY CYCLE  ·  " + supply_mod.weekly_tip())
         self.weekly_label.setWordWrap(True)
         self.weekly_label.setStyleSheet(f"color:{theme.VIOLET};padding:2px 2px")
-        self.weekly_label.setToolTip("From price history around the weekly reset (supply requests). One week of data, "
-                                     "so treat it as a hint.")
+        self.weekly_label.setToolTip("From price history around the weekly reset (supply requests) on EU and NA servers; only what held in both "
+                                     "regions is shown. One week of data, so treat it as a hint.")
         lay.addWidget(self.weekly_label)
 
         filt = QHBoxLayout()
@@ -477,7 +477,7 @@ class MainWindow(QMainWindow):
                 f"~{o.minutes_per_day:.0f} min/day of your time · <span class='gold'>{kinah(o.profit_per_listing)}</span> "
                 f"per listing</p>")
         out.append(f"<p class='muted'>Realistic numbers above. The raw prediction is {kinah(o.profit_unit, True)} per item "
-                   f"({pct(o.roi, True)}); in simulations on five servers' real prices, trades predicted like this "
+                   f"({pct(o.roi, True)}); in simulations on EU servers' real prices, trades predicted like this "
                    f"made about {pct(o.real_roi, True)}. New-game prices are hard to predict, so the plan spreads "
                    f"your kinah (max 15% per item).</p>")
         if o.good:
