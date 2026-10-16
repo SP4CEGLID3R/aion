@@ -7,7 +7,8 @@ HISTORY is either the app's own history.db (in %APPDATA%\\Aion2IncomeAssistant, 
 Refresh) or a JSON file:
 
 HISTORY.json = {"snapshots": [{"ts": epoch, "rows": [market rows as /api/items returns]}, ...],
-                "kaisinel_sales": {item_key: {"sold28": units}}}   (optional real sales volumes)
+                "kaisinel_sales": {item_key: {"sold28": units}},   (optional real sales volumes)
+                "borrowed_sales_days": 10.9}  (optional: days those borrowed counts cover; default 28)
 
 Each simulated day:
   1. morning (start of your session, peak hours): the app analyses a real market snapshot
@@ -39,6 +40,7 @@ from aion_income.engine import Engine, MarketData, Settings  # noqa: E402
 from aion_income.opportunities import LISTING_MINUTES, LISTING_SLOTS  # noqa: E402
 from aion_income.opportunities import CALIBRATION  # noqa: E402
 from aion_income.planner import MAX_SHARE, OVERHEAD_MINUTES, make_plan  # noqa: E402
+from aion_income.pricing import counter_days  # noqa: E402
 from aion_income.recipes import _load_json, book_from_compact  # noqa: E402
 
 PEAK_TRADE_SHARE = 0.55   # share of a day's trades in the busiest 8 hours
@@ -127,6 +129,7 @@ class Market:
         self.engine = Engine(tempfile.mkdtemp(), book=book)
         series = {}
         self.analyses = []
+        first_units = {str(r["item_key"]): r["units_sold"] for r in snaps[0]["rows"] if r.get("units_sold")}
         for s in snaps:
             rows = []
             for r in s["rows"]:
@@ -140,7 +143,14 @@ class Market:
                 if r.get("price"):
                     series.setdefault(k, []).append((s["ts"], r["price"], r.get("listings") or 0))
             window = {k: list(v) for k, v in series.items()}  # everything seen so far, like the app's history
-            data = MarketData(server=server, rows=rows, fetched_at=s["ts"], snapshots=window)
+            if sales:  # borrowed counts cover the days the other server's counter had run
+                sales_days = float(hist.get("borrowed_sales_days") or 28.0)
+            else:      # the server's own counter: how long it has run, from its growth (like the app)
+                now_units = {str(r["item_key"]): r.get("units_sold") for r in s["rows"]}
+                common = [k for k in first_units if now_units.get(k)]
+                sales_days = counter_days(snaps[0]["ts"], sum(first_units[k] for k in common), s["ts"],
+                                          sum(now_units[k] for k in common), s["ts"]) if common else None
+            data = MarketData(server=server, rows=rows, fetched_at=s["ts"], snapshots=window, sales_days=sales_days)
             self.analyses.append((s["ts"], self.engine.analyse(data, settings)))
         # a "day" = a real snapshot with enough history behind it and one ~24 h later
         self.days = []

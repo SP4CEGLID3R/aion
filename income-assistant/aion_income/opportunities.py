@@ -229,10 +229,12 @@ def craft_opportunity(res: CraftResult, ctx: CraftContext) -> Opportunity | None
     for line in res.lines:
         if line.source.how in ("buy", "bulk"):
             ist = ctx.stats.get(line.key)
-            if ist and ist.listings < 3 and line.qty > 1:
+            if ist and ist.listings < 3:
                 risky.append(f"ingredient {line.name} has only {ist.listings} listing(s)")
     if st.falling:
         risky.append(f"{res.name} price falling: {st.trend_short:+.0%} in the last day")
+    if st.listings < 3:
+        risky.append(f"only {st.listings} listed right now: its price comes from past sales")
     for n in res.notes:
         op.reasons.append(n)
     safe_ok = res.success >= 0.85 and loss10 < 0.1 and not (st.trend_7d is not None and st.trend_7d < -0.1)
@@ -255,7 +257,7 @@ def resell_opportunity(st: ItemStats, keep: float) -> Opportunity | None:
     profit = revenue - buy_batch
     if profit <= buy_batch * MIN_MARGIN:
         return None
-    pess = (st.pessimistic or target * 0.85) * keep - buy_batch
+    pess = min(st.pessimistic or target * 0.85, target) * keep - buy_batch  # the low case is never above the target
     your = (st.sales_per_day or 0) * MARKET_SHARE
     op = Opportunity(
         method="Resell", name=st.name, key=st.key, cost_unit=buy_batch, revenue_unit=revenue, profit_unit=profit,

@@ -34,14 +34,16 @@ def stock_days_for(trend_per_day: float | None) -> float:
     return next(days for floor, days in STOCK_BY_TREND if trend_per_day >= floor)
 
 
-def items_trend(ops, market_drift: float | None = None) -> float | None:
-    """Typical daily price move of the items these opportunities sell, weighted by money at stake;
-    falls back to the market-wide day-over-day drift."""
+def items_trend(ops, market_drift: float | None = None, weights=None) -> float | None:
+    """Typical daily price move of the items these opportunities sell, weighted by money at stake
+    (weights, e.g. each plan line's capital); falls back to the market-wide day-over-day drift."""
     pts = []
-    for op in ops:
+    for i, op in enumerate(ops):
         st = op.stats
         if st is not None and st.trend_7d is not None and st.trend_7d > -0.95:
-            pts.append(((1 + st.trend_7d) ** (1 / 7) - 1, max(op.capital, 1.0)))
+            span = min(7.0, max(2.0, st.trend_days or 7.0))  # the trend covers 2-7 days of history
+            w = weights[i] if weights is not None else op.capital
+            pts.append(((1 + st.trend_7d) ** (1 / span) - 1, max(w, 1.0)))
     if pts:
         pts.sort()
         half, acc = sum(w for _, w in pts) / 2, 0.0
@@ -114,18 +116,23 @@ def _greedy(cands, budget, horizon, minutes_cap, limit, max_share=1.0):
         sell_key = op.stats.key if op.stats else (op.method, op.key)
         if sell_key in used_keys:
             continue  # buyers of one item are shared: don't count them twice
-        frac = 1.0
+        flow = 1.0
         if op.minutes_per_day > minutes_left:
-            frac = minutes_left / op.minutes_per_day  # not enough time to list all of it
-        take = min(int(math.floor(units * frac)) or 1, units, int(left // op.cost_unit),
+            flow = minutes_left / op.minutes_per_day  # not enough time to list all of it: sell slower
+        take = min(int(math.floor(units * flow)) or 1, units, int(left // op.cost_unit),
                    int(line_cap // op.cost_unit))  # don't put too much into one item
         if take <= 0:
             continue
         frac = take / units
-        lines.append(PlanLine(op, take, take * op.cost_unit, profit * frac, sold * frac, op.minutes_per_day * frac))
+        # listing time follows how fast you sell, not how much you hold: stock of a day or more
+        # is listed at the full (or time-limited) pace until it runs out
+        minutes = op.minutes_per_day * min(flow, take / max(op.your_per_day, 1e-9), 1.0)
+        if minutes > minutes_left + 1e-9:
+            continue  # not even one unit fits in the time left
+        lines.append(PlanLine(op, take, take * op.cost_unit, profit * frac, sold * frac, minutes))
         used_keys.add(sell_key)
         left -= take * op.cost_unit
-        minutes_left -= op.minutes_per_day * frac
+        minutes_left -= minutes
         if len(lines) >= min(limit, LISTING_SLOTS):
             break  # one listing slot per item at least
     return lines
@@ -159,7 +166,7 @@ def make_adaptive_plan(ops: list[Opportunity], budget: float, horizon: float = 1
     """make_plan with the stock length set by how the chosen items' prices are moving.
     Returns (plan, stock days, daily trend or None)."""
     first = make_plan(ops, budget, horizon, play_hours=play_hours)
-    trend = items_trend([l.op for l in first.lines], market_drift)
+    trend = items_trend([l.op for l in first.lines], market_drift, [l.capital for l in first.lines])
     days = min(max(horizon, 1.0), stock_days_for(trend), MAX_STOCK_DAYS)
     if days >= min(max(horizon, 1.0), MAX_STOCK_DAYS):
         return first, days, trend
@@ -186,7 +193,7 @@ def holding_tiers(ops: list[Opportunity], horizon: float = 3.0, play_hours: floa
     that is unrealistic for most players.
     """
     curve = [(b, make_plan(ops, b, horizon, play_hours=play_hours, batch_days=batch_days).profit_per_day) for b in GRID]
-    best = curve[-1][1]
+    best = max(p for _, p in curve)  # a bigger budget doesn't always earn more
     if best <= 0:
         return []
     tiers = []
@@ -201,6 +208,8 @@ def holding_tiers(ops: list[Opportunity], horizon: float = 3.0, play_hours: floa
                 break
         if choice is None:
             break
+        if tiers and choice[1] < tiers[-1].profit_per_day * 1.03:
+            break  # more kinah earns (almost) nothing more here: don't suggest holding it
         tiers.append(HoldTier(label, choice[0], choice[1]))
         prev = choice[0]
     return tiers

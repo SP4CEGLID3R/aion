@@ -182,3 +182,45 @@ def test_simulator_runs_on_the_apps_own_history(engine, settings, fake, tmp_path
     assert len(hist["snapshots"]) >= 13
     res = simulate.main([db, "--days", "3", "--runs", "2", "--start", "5m"])
     assert len(res) == 6 and all(r["p10"] >= 0 for r in res)
+
+
+def test_settings_load_rejects_odd_values(tmp_path):
+    p = tmp_path / "s.json"
+    for bad in ("[]", "null", "3"):
+        p.write_text(bad)
+        assert Settings.load(str(p)).budget == Settings().budget   # no crash, defaults
+    p.write_text(json.dumps({"budget": float("inf"), "horizon": 5, "tax_pct": float("nan"), "play_hours": True}))
+    t = Settings.load(str(p))
+    assert t.budget == Settings().budget and t.horizon == 10.0 and t.tax_pct == 10.0 and t.play_hours == 8.0
+    p.write_text(json.dumps({"budget": 0, "horizon": 3}))
+    t = Settings.load(str(p))
+    assert t.budget == Settings().budget and t.horizon == 3.0
+
+
+def test_missing_server_is_never_swapped_for_another(engine, settings):
+    from aion_income.api import ServerNotFound
+    settings.server_name, settings.server_region = "Lumiel", "Mars"
+    with pytest.raises(ServerNotFound):
+        engine.refresh(settings)
+
+
+def test_offline_copy_works_for_any_server_name(engine, settings, fake, monkeypatch):
+    import sys
+    monkeypatch.setattr(sys.modules[type(fake).__module__], "LUMIEL", 11304)  # the fake serves Kaisinel
+    settings.server_name, settings.server_region = "Kaisinel", "EU"
+    engine.refresh(settings)
+    fake.fail.update({"items", "details", "servers"})
+    a = engine.refresh(settings)
+    assert a.data.offline and a.data.server["server_id"] == 11304
+
+
+def test_sales_rate_uses_how_long_the_counter_has_run(engine, settings, fake):
+    """The site's 'units sold' covers 28 days, but on a younger market only the days so far."""
+    t0 = time.time() - 2 * 86400
+    rows0 = [dict(r, units_sold=1000, captured_at=None) for r in fake.rows]
+    rows1 = [dict(r, units_sold=3000, captured_at=None) for r in fake.rows]  # +2000 in 2 days: began a day before t0
+    engine.store.add_snapshot(12304, rows0, now=t0)
+    engine.store.add_snapshot(12304, rows1, now=t0 + 2 * 86400)
+    from aion_income.pricing import counter_days
+    span = engine.store.counter_span(12304, t0 - 1)
+    assert span and abs(counter_days(*span, t0 + 2 * 86400) - 3.0) < 0.01

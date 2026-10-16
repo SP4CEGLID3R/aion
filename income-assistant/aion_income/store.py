@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import statistics
 import threading
 import time
 from datetime import datetime
@@ -82,6 +83,25 @@ class HistoryStore:
                 "SELECT ts, price, listings FROM snapshots WHERE server=? AND item=? AND ts>=? ORDER BY ts",
                 (server, str(item), since),
             ).fetchall()
+
+    def counter_span(self, server: int, since: float, min_items: int = 50):
+        """(t0, total0, t1, total1): the site's "units sold" totals at the start and end of your
+        history since `since`, over the items seen at least 6 hours apart (each item has its own
+        capture time, so times are the medians). None with too little history."""
+        first: dict[str, tuple] = {}
+        last: dict[str, tuple] = {}
+        with self._lock:
+            for item, ts, units in self.db.execute(
+                    "SELECT item, ts, units_sold FROM snapshots WHERE server=? AND ts>=? AND units_sold IS NOT NULL "
+                    "ORDER BY ts", (server, since)):
+                first.setdefault(item, (ts, units))
+                last[item] = (ts, units)
+        pairs = [(first[k], last[k]) for k in first if last[k][0] - first[k][0] >= 6 * 3600]
+        if len(pairs) < min_items:
+            return None
+        t0 = statistics.median(a[0] for a, _ in pairs)
+        t1 = statistics.median(b[0] for _, b in pairs)
+        return t0, float(sum(a[1] for a, _ in pairs)), t1, float(sum(b[1] for _, b in pairs))
 
     def all_series(self, server: int, since: float) -> dict[str, list[tuple]]:
         out: dict[str, list[tuple]] = {}

@@ -178,3 +178,19 @@ def test_stock_length_follows_the_price_trend():
     assert days == 3                          # falls back to the market-wide drift
     p, days, _ = make_adaptive_plan([with_trend(0.05)], 1e9, horizon=3)
     assert days == 3                          # never more than "sell within"
+
+
+def test_plan_never_uses_more_time_than_you_have():
+    import random
+    rnd = random.Random(3)
+    ops = [op(f"i{i}", rnd.randint(500, 50_000), rnd.randint(100, 20_000), per_day=rnd.uniform(1, 400)) for i in range(40)]
+    for hours in (0.5, 1, 2, 3, 8):
+        for budget in (1e5, 2e6, 3e7):
+            p = make_plan(ops, budget, 10, play_hours=hours)
+            assert p.minutes <= max(0.0, hours * 60 - 20) + 1e-6
+
+
+def test_holding_tiers_stop_when_more_kinah_earns_nothing():
+    tiny = [op("t", 10_000, 4_000, per_day=2)]   # the market takes 20 units (200k): past the 15%-per-item
+    tiers = holding_tiers(tiny, 10)              # cap at ~1.5M budget, more kinah can't help
+    assert len(tiers) < 3 and tiers[-1].amount <= 1.5e6

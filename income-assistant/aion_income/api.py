@@ -28,6 +28,10 @@ class ApiError(Exception):
     pass
 
 
+class ServerNotFound(ApiError):
+    """The server list loaded, but has no server with that name in that region."""
+
+
 class ExchangeClient:
     def __init__(self, base_url: str = BASE_URL, session: requests.Session | None = None,
                  min_interval: float = 0.15, timeout: float = 25.0, retry_waits=(2.0, 6.0)):
@@ -46,6 +50,7 @@ class ExchangeClient:
             now = time.monotonic()
             slot = max(now, self._next_slot)
             self._next_slot = slot + self.min_interval
+            self.request_count += 1
         if slot > now:
             time.sleep(slot - now)
 
@@ -54,7 +59,6 @@ class ExchangeClient:
         last = None
         for attempt in range(len(self.retry_waits) + 1):
             self._wait_turn()
-            self.request_count += 1
             try:
                 r = self.session.get(url, params=params, timeout=self.timeout)
             except requests.RequestException as e:
@@ -86,13 +90,13 @@ class ExchangeClient:
         there is a Lumiel in EU, NA East, NA West, South America and Asia)."""
         matches = [s for s in self.servers() if str(s.get("name", "")).strip().lower() == name.lower()]
         if not matches:
-            raise ApiError(f"server '{name}' not found on aion2.exchange")
+            raise ServerNotFound(f"server '{name}' not found on aion2.exchange")
         if region:
             r = region.strip().lower()
             in_region = [s for s in matches if r in (str(s.get("region", "")).lower(), str(s.get("region_name", "")).lower())]
             if not in_region:
                 have = ", ".join(sorted({str(s.get("region")) for s in matches}))
-                raise ApiError(f"no server '{name}' in region {region} (found in: {have})")
+                raise ServerNotFound(f"no server '{name}' in region {region} (found in: {have})")
             matches = in_region
         matches.sort(key=lambda s: (not s.get("has_data", True),))
         return matches[0]

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from ..crafting import batch_loss_probability
 from ..engine import Analysis, Engine, Settings
 from ..opportunities import MARKET_SHARE, RISK_ORDER, speed_text
-from ..planner import holding_tiers, make_adaptive_plan
+from ..planner import holding_tiers, make_adaptive_plan, stock_days_for
 from ..pricing import history_stats
 from ..recipes import PROFESSIONS
 from .. import supply as supply_mod
@@ -105,6 +105,7 @@ class MainWindow(QMainWindow):
         self.current_plan = None
         self._thread = None
         self._worker = None
+        self._refresh_again = False
         self.setWindowTitle("Kinah Forge · Aion 2 Income Assistant")
         self.setWindowIcon(theme.app_icon())
         self.resize(1360, 860)
@@ -507,7 +508,11 @@ class MainWindow(QMainWindow):
         self.horizon_box = QComboBox()
         for label, _ in HORIZONS:
             self.horizon_box.addItem(label)
-        self.horizon_box.setCurrentIndex(next((i for i, (_, hh) in enumerate(HORIZONS) if hh == self.settings.horizon), 1))
+        idx = next((i for i, (_, hh) in enumerate(HORIZONS) if hh == self.settings.horizon), None)
+        if idx is None:  # a saved value that isn't one of the choices: use the default 10 days
+            idx = len(HORIZONS) - 1
+            self.settings.horizon = HORIZONS[idx][1]
+        self.horizon_box.setCurrentIndex(idx)
         self.horizon_box.currentIndexChanged.connect(self._horizon_changed)
         top.addWidget(self.horizon_box)
         top.addStretch(1)
@@ -611,7 +616,9 @@ class MainWindow(QMainWindow):
         p, stock_days, trend = make_adaptive_plan(ops, self.settings.budget, self.settings.horizon,
                                                   self.settings.play_hours, drift)
         self.current_plan, self.stock_days = p, stock_days
-        if trend is None:
+        if stock_days < stock_days_for(trend) and stock_days >= self.settings.horizon:
+            stock_note = f" Buying at most {stock_days:g} days of stock, as set by Sell within."
+        elif trend is None:
             stock_note = (f" Buying at most {stock_days:g} days of stock: not enough price history yet to tell "
                           f"whether prices are rising or falling.")
         else:
@@ -651,7 +658,8 @@ class MainWindow(QMainWindow):
                             f"<span style='color:{theme.GREEN}'>≈ +{short(t.profit_per_day)} / day</span>")
             else:
                 lab.setText(f"<span style='color:{theme.MUTED};font-size:8.5pt;font-weight:600'>{name.upper()}</span>"
-                            f"<br><span style='font-size:18pt;color:{theme.FAINT}'>—</span>")
+                            f"<br><span style='font-size:18pt;color:{theme.FAINT}'>—</span>"
+                            + (f"<br><span style='color:{theme.FAINT}'>more kinah earns no more here</span>" if tiers else ""))
 
     # ── page 3: crafting ─────────────────────────────────────────────────
 
@@ -1204,6 +1212,7 @@ class MainWindow(QMainWindow):
 
     def refresh(self):
         if self._thread is not None:
+            self._refresh_again = True  # e.g. the server changed mid-refresh: run once more after this one
             return
         self.refresh_btn.setEnabled(False)
         self.refresh_btn.setText("  Refreshing…")
@@ -1232,11 +1241,14 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_refreshed(self, analysis):
+        used = self._worker.settings if self._worker else self.settings
+        if (used.server_name, used.server_region) != (self.settings.server_name, self.settings.server_region):
+            return  # downloaded for the server you just switched away from; the next refresh is queued
         self.analysis = analysis
         srv = analysis.data.server
         self.server_label.setText(str(srv.get("name", self.settings.server_name)).upper())
         self.server_sub.setText(f"{srv.get('faction', '')} · {srv.get('region_name') or srv.get('region', '')}".strip(" ·"))
-        self.recalculate(reuse=True)
+        self.recalculate(reuse=used == self.settings)  # settings edited mid-refresh: recalculate with them
         when = time.strftime("%H:%M", time.localtime(analysis.data.fetched_at))
         if analysis.data.offline:
             self._set_status("Offline copy from " + when, theme.AMBER)
@@ -1256,6 +1268,9 @@ class MainWindow(QMainWindow):
         self._thread.deleteLater()
         self._thread = None
         self._worker = None
+        if self._refresh_again:
+            self._refresh_again = False
+            QTimer.singleShot(0, self.refresh)
 
     def schedule_recalc(self):
         self._recalc_timer.start()

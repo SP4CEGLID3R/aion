@@ -39,6 +39,7 @@ class ItemStats:
     pessimistic: float | None = None  # what you get if the market dips (25th percentile)
     volatility: float | None = None   # coefficient of variation of hourly prices
     trend_7d: float | None = None
+    trend_days: float | None = None  # how many days trend_7d covers (2-7)
     supply_kind: str | None = None    # "Daily"/"Weekly" when a supply request asks for this item
     supply_hours_left: float | None = None
     reversion: float = 0.3            # share of a dip that recovers within a day (learned, see calibrate)
@@ -226,7 +227,7 @@ def history_stats(points, now: float | None = None):
     def close(p):
         return _num(p.get("close")) or _num(p.get("low")) or _num(p.get("price"))
     recent = [(ts, close(p), p) for ts, p in pts if ts >= now - HISTORY_HOURS * 3600 and close(p)]
-    res = {"ref": None, "pessimistic": None, "volatility": None, "trend_7d": None, "n": len(recent)}
+    res = {"ref": None, "pessimistic": None, "volatility": None, "trend_7d": None, "trend_days": None, "n": len(recent)}
     res["recent"], res["trend_short"] = recent_split([(ts, c) for ts, c, _ in recent], now)
     if len(recent) >= MIN_HISTORY_POINTS:
         closes = [c for _, c, _ in recent]
@@ -240,6 +241,7 @@ def history_stats(points, now: float | None = None):
         first = statistics.median(c for _, c in week[: max(1, len(week) // 10)])
         last = statistics.median(c for _, c in week[-max(1, len(week) // 10):])
         res["trend_7d"] = last / first - 1 if first else None
+        res["trend_days"] = (week[-1][0] - week[0][0]) / 86400
     return res
 
 
@@ -299,7 +301,18 @@ def depth_price(depth):
     return None, None
 
 
-def build_stats(row: dict, hourly=None, buckets=None, snapshots=None, depth=None, now=None) -> ItemStats:
+def counter_days(t0: float, u0: float, t1: float, u1: float, now: float) -> float | None:
+    """How many days the site's "units sold" counter covers, from how fast it grew between two of
+    your refreshes. It is meant to cover 28 days, but on a market younger than that it covers
+    only the days since it started, and dividing by 28 would understate every sales rate."""
+    if t1 - t0 < 6 * 3600 or u0 <= 0 or u1 <= u0:
+        return None  # too little to tell, or a full window (the total no longer grows)
+    start = t1 - u1 * (t1 - t0) / (u1 - u0)  # where the steady growth line hits zero
+    return min(28.0, max(1.0, (now - start) / 86400))
+
+
+def build_stats(row: dict, hourly=None, buckets=None, snapshots=None, depth=None, now=None,
+                sales_days: float = 28.0) -> ItemStats:
     cat = row.get("category") or {}
     st = ItemStats(
         key=str(row.get("item_key")),
@@ -316,7 +329,7 @@ def build_stats(row: dict, hourly=None, buckets=None, snapshots=None, depth=None
     if hourly:
         h = history_stats(hourly, now)
         st.history_points = h["n"]
-        st.trend_7d = h["trend_7d"]
+        st.trend_7d, st.trend_days = h["trend_7d"], h["trend_days"]
         st.recent_ref, st.trend_short = h["recent"], h["trend_short"]
         if h["ref"]:
             st.ref, st.ref_basis = h["ref"], "site history (72 h median)"
@@ -340,6 +353,7 @@ def build_stats(row: dict, hourly=None, buckets=None, snapshots=None, depth=None
                 first = statistics.median(p for _, p in week[:n])
                 last = statistics.median(p for _, p in week[-n:])
                 st.trend_7d = last / first - 1 if first else None
+                st.trend_days = (week[-1][0] - week[0][0]) / 86400
     if st.ref is None and st.sold_avg and st.units_sold_28d > 0:
         st.ref, st.ref_basis = st.sold_avg, "market sales average (28 days)"
     if st.sold_avg and st.units_sold_28d > 0 and st.ref:
@@ -348,7 +362,9 @@ def build_stats(row: dict, hourly=None, buckets=None, snapshots=None, depth=None
 
     # how fast it sells
     if st.units_sold_28d > 0:
-        st.sales_per_day, st.sales_basis, st.sales_hours = st.units_sold_28d / 28.0, "market sales (28 days)", 28 * 24
+        days = min(28.0, max(1.0, sales_days or 28.0))
+        st.sales_per_day = st.units_sold_28d / days
+        st.sales_basis, st.sales_hours = f"market sales (last {days:.0f} days)", days * 24
     else:
         best = None
         for fn, src, basis in ((sales_from_buckets, buckets, "listings sold on the site (last hours)"),

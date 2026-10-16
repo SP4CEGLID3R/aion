@@ -130,3 +130,15 @@ def test_calibrate_learns_dips_and_drift():
     rev2, _, n2 = calibrate(bouncy)
     assert n2 >= 30 and rev2 > 0.8
     assert calibrate({})[0] == 0.3  # not enough history: cautious default
+
+
+def test_counter_days_and_sales_rate():
+    from aion_income.pricing import build_stats, counter_days
+    day = 86400
+    assert abs(counter_days(0, 1000, 2 * day, 3000, 2 * day) - 3.0) < 1e-9   # grew 1000/day from day -1
+    assert counter_days(0, 1000, 3600, 1100, 3600) is None                     # under 6 h: can't tell
+    assert counter_days(0, 1000, day, 1000, day) is None                       # not growing: full window
+    assert counter_days(0, 10, 60 * day, 1000, 60 * day) == 28.0               # never more than 28 days
+    st = build_stats(row(100, units_sold=1100), sales_days=11)
+    assert abs(st.sales_per_day - 100) < 1e-9 and "11 days" in st.sales_basis
+    assert abs(build_stats(row(100, units_sold=2800)).sales_per_day - 100) < 1e-9  # default 28 days

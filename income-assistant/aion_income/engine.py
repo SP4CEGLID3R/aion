@@ -3,14 +3,15 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import math
 import os
 import time
 from dataclasses import dataclass, field
 
-from .api import ApiError, ExchangeClient
+from .api import ApiError, ExchangeClient, ServerNotFound
 from .crafting import CraftContext
 from .opportunities import all_opportunities
-from .pricing import build_stats, calibrate
+from .pricing import build_stats, calibrate, counter_days
 from .recipes import PROFESSIONS, RecipeBook, load_book
 from .store import HistoryStore, parse_ts
 from . import supply as supply_mod
@@ -19,6 +20,8 @@ REGIONS = {"EU": "Europe", "NAE": "North America East", "NAW": "North America We
            "AS": "Asia"}
 # Known ids for when the server list can't be downloaded (Lumiel is Asmodian in every region).
 LUMIEL_IDS = {"EU": 12304, "NAE": 12104, "NAW": 12204, "LA": 12404, "AS": 12504}
+
+HORIZON_CHOICES = (1.0, 3.0, 7.0, 10.0)  # the "Sell within" choices
 
 HOURLY_TTL = 30 * 60
 BUCKETS_TTL = 20 * 60
@@ -59,11 +62,22 @@ class Settings:
                 raw = json.load(f)
         except (OSError, ValueError):
             return s
-        for k in ("tax_pct", "fee_pct", "budget", "horizon"):
-            if isinstance(raw.get(k), (int, float)) and raw[k] >= 0:
-                setattr(s, k, float(raw[k]))
-        if isinstance(raw.get("play_hours"), (int, float)) and 0.5 <= raw["play_hours"] <= 24:
-            s.play_hours = float(raw["play_hours"])
+        if not isinstance(raw, dict):
+            return s
+
+        def num(k, lo, hi):
+            v = raw.get(k)
+            ok = isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and lo <= v <= hi
+            return float(v) if ok else None
+        for k, lo, hi in (("tax_pct", 0, 50), ("fee_pct", 0, 50)):
+            if num(k, lo, hi) is not None:
+                setattr(s, k, num(k, lo, hi))
+        if num("budget", 1, 1e12) is not None:
+            s.budget = num("budget", 1, 1e12)
+        if num("horizon", 0, 1e9) in HORIZON_CHOICES:
+            s.horizon = num("horizon", 0, 1e9)
+        if num("play_hours", 0.5, 24) is not None:
+            s.play_hours = num("play_hours", 0.5, 24)
         if isinstance(raw.get("levels"), dict):
             for p in PROFESSIONS:
                 v = raw["levels"].get(p)
@@ -106,6 +120,7 @@ class MarketData:
     warnings: list = field(default_factory=list)
     requests: int = 0
     calibration: dict = field(default_factory=dict)
+    sales_days: float | None = None  # days the site's "units sold" counter covers (None: assume 28)
 
 
 @dataclass
@@ -154,13 +169,17 @@ class Engine:
         start_requests = self.client.request_count
         try:
             server = self.client.find_server(settings.server_name, settings.server_region)
+            if "server_id" not in server:
+                raise ApiError("server list entry has no id")
+            self._remember_server(settings, server)
+        except ServerNotFound:
+            raise  # the list loaded and the server isn't there: never swap in a different one
         except ApiError as e:
-            sid = LUMIEL_IDS.get(settings.server_region) if settings.server_name.lower() == "lumiel" else None
-            if sid is None:
+            server = self._known_server(settings)
+            if server is None:
                 raise
-            server = {"server_id": sid, "name": "Lumiel", "region": settings.server_region,
-                      "region_name": REGIONS[settings.server_region], "faction": "Asmodian"}
-            warnings.append(f"Server list unavailable ({e}); using Lumiel {settings.server_region} id {sid}.")
+            warnings.append(f"Server list unavailable ({e}); using {server['name']} "
+                            f"({server.get('region', settings.server_region)}) id {server['server_id']}.")
         sid = int(server["server_id"])
         progress("Downloading market prices…", 0.06)
         offline = False
@@ -181,6 +200,8 @@ class Engine:
         data = MarketData(server=server, rows=rows, fetched_at=fetched, offline=offline, warnings=warnings)
         data.snapshots = self.store.all_series(sid, time.time() - 7 * 86400)
         data.snapshot_count = self.store.snapshot_count(sid)
+        span = self.store.counter_span(sid, time.time() - 28 * 86400)
+        data.sales_days = counter_days(*span, fetched) if span else None
 
         # first pass without history to see which items matter
         progress("Finding candidates…", 0.12)
@@ -189,6 +210,41 @@ class Engine:
         data.details = self.fetch_details(sid, keys, first, offline, progress)
         data.requests = self.client.request_count - start_requests
         return data
+
+    @property
+    def _servers_path(self) -> str:
+        return os.path.join(self.data_dir, "servers.json")
+
+    def _remember_server(self, settings: Settings, server: dict) -> None:
+        """Keep the last resolved server so an outage of the server list doesn't block the offline copy."""
+        try:
+            with open(self._servers_path, encoding="utf-8") as f:
+                known = json.load(f)
+            if not isinstance(known, dict):
+                known = {}
+        except (OSError, ValueError):
+            known = {}
+        known[f"{settings.server_name.lower()}|{settings.server_region}"] = server
+        try:
+            with open(self._servers_path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(known, f)
+            os.replace(self._servers_path + ".tmp", self._servers_path)
+        except OSError:
+            pass
+
+    def _known_server(self, settings: Settings) -> dict | None:
+        try:
+            with open(self._servers_path, encoding="utf-8") as f:
+                hit = json.load(f).get(f"{settings.server_name.lower()}|{settings.server_region}")
+            if isinstance(hit, dict) and "server_id" in hit:
+                return hit
+        except (OSError, ValueError, AttributeError):
+            pass
+        sid = LUMIEL_IDS.get(settings.server_region) if settings.server_name.lower() == "lumiel" else None
+        if sid is None:
+            return None
+        return {"server_id": sid, "name": "Lumiel", "region": settings.server_region,
+                "region_name": REGIONS[settings.server_region], "faction": "Asmodian"}
 
     def candidate_keys(self, a: Analysis) -> list[str]:
         """Items worth a closer look: what the best crafts sell and buy, plus the
@@ -275,7 +331,8 @@ class Engine:
             key = str(row.get("item_key"))
             d = data.details.get(key, {})
             stats[key] = build_stats(row, hourly=d.get("hourly"), buckets=d.get("buckets"),
-                                     snapshots=data.snapshots.get(key), depth=d.get("depth"))
+                                     snapshots=data.snapshots.get(key), depth=d.get("depth"),
+                                     sales_days=data.sales_days or 28.0)
             stats[key].reversion, stats[key].drift = reversion, drift
             if key in book.items and book.items[key][0]:
                 stats[key].name = stats[key].name or book.items[key][0]

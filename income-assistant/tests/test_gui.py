@@ -160,3 +160,32 @@ def test_refresh_failure_shows_message(app, engine, settings, fake, monkeypatch)
     assert "aion2.exchange" in shown.get("msg", "")
     assert win.refresh_btn.isEnabled()
     win.close()
+
+
+def test_odd_saved_horizon_snaps_to_the_default(app, engine, settings):
+    settings.horizon = 5.0                      # not one of the "Sell within" choices
+    win = MainWindow(engine, settings, auto_refresh=False)
+    assert win.horizon_box.currentText() == "10 days" and win.settings.horizon == 10.0
+    win.close()
+
+
+def test_changes_during_a_refresh_are_not_lost(app, engine, settings, fake):
+    win = MainWindow(engine, settings, auto_refresh=False)
+    win.refresh()
+    win.settings.tax_pct = 50.0                 # edited while downloading
+    win.refresh()                               # e.g. a server change asks for another refresh
+    assert win._refresh_again
+    end = time.time() + 60
+    while (win.is_refreshing() or win._refresh_again) and time.time() < end:
+        app.processEvents()
+        time.sleep(0.02)
+    for _ in range(50):                         # let the queued second refresh start and finish
+        app.processEvents()
+        time.sleep(0.02)
+    while win.is_refreshing() and time.time() < end:
+        app.processEvents()
+        time.sleep(0.02)
+    app.processEvents()
+    assert win.analysis is not None
+    assert abs(win.analysis.ctx.keep - win.settings.keep) < 1e-9   # numbers use the 50% tax
+    win.close()

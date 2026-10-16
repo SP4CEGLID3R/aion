@@ -256,7 +256,8 @@ class CraftContext:
         cs = combo_success(self.book, r, int(self.levels.get(r.profession, 0)), s)
         cp = r.combo_chance if r.combo else 0.0
         combo_st = self.stats.get(r.combo) if r.combo else None
-        combo_ok = bool(combo_st and combo_st.trusted)
+        # a Splendent version only counts when people really buy it: a price with no sales is no value
+        combo_ok = bool(combo_st and combo_st.trusted and (combo_st.sales_per_day or 0) > 0)
         p_combo = s * cp * cs if combo_ok else 0.0
         p_plain = s - p_combo
         p_fail = 1 - s
@@ -295,16 +296,21 @@ class CraftContext:
 
 
 def batch_loss_probability(res: CraftResult, n: int) -> float:
-    """Chance that n crafts lose money overall, ignoring combo luck (conservative)."""
+    """Chance that n crafts lose money overall: each attempt fails, gives the plain result or
+    gives the Splendent (combo) result, so a combo-luck craft isn't shown as a certain loss."""
     if n <= 0:
         return 0.0
-    from math import comb
-    if res.plain_value <= 0:
+    from math import factorial
+    pf, pp, pc = max(0.0, res.p_fail), max(0.0, res.p_plain), max(0.0, res.p_combo)
+    total = pf + pp + pc
+    if total <= 0:
         return 1.0
-    need = res.cost * n / res.plain_value  # successes needed to break even
-    s = res.success
+    pf, pp, pc = pf / total, pp / total, pc / total
+    spend = res.cost * n
     p = 0.0
-    for k in range(n + 1):
-        if k < need - 1e-9:
-            p += comb(n, k) * s ** k * (1 - s) ** (n - k)
-    return p
+    for a in range(n + 1):          # plain results
+        for b in range(n - a + 1):  # combo results
+            if a * res.plain_value + b * res.combo_value < spend - 1e-9:
+                f = n - a - b
+                p += factorial(n) / (factorial(a) * factorial(b) * factorial(f)) * pp ** a * pc ** b * pf ** f
+    return min(1.0, p)

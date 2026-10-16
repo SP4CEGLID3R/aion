@@ -130,3 +130,25 @@ def test_batch_loss_probability():
     res = ctx.evaluate(SWORD)
     p = batch_loss_probability(res, 10)
     assert 0 <= p < 0.01  # needs only ~3 of 10 successes to break even
+
+
+def test_batch_loss_counts_combo_results():
+    import dataclasses
+    st = {"ore": stats("ore", "Pure Orichalcum Ore", 100), "sword": stats("sword", "Orichalcum Longsword", 10_000)}
+    ctx = CraftContext(mini_book([SWORD]), st, {"blacksmithing": 3}, "dark", 0.88)
+    res = ctx.evaluate(SWORD)
+    # plain result worth nothing, combo result worth a lot: profitable only through combos
+    lottery = dataclasses.replace(res, plain_value=0.0, combo_value=res.cost * 20, p_fail=0.2, p_plain=0.6, p_combo=0.2)
+    p = batch_loss_probability(lottery, 10)
+    assert abs(p - 0.8 ** 10) < 1e-9          # loses only if no combo at all in 10 tries
+    never = dataclasses.replace(res, plain_value=0.0, combo_value=0.0)
+    assert batch_loss_probability(never, 10) == 1.0
+
+
+def test_splendent_without_sales_is_not_counted():
+    st = {"ore": stats("ore", "Pure Orichalcum Ore", 100), "od": stats("od", "Pure Odyle", 500),
+          "sword": stats("sword", "Orichalcum Longsword", 10_000),
+          "ssword": stats("ssword", "Splendent", 50_000, sales=None)}
+    ctx = CraftContext(mini_book([SWORD]), st, {"blacksmithing": 3}, "dark", keep=0.88)
+    res = ctx.evaluate(SWORD)
+    assert res.p_combo == 0 and res.profit == pytest.approx(res.profit_plain_only)
