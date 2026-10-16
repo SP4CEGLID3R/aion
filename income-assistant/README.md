@@ -141,18 +141,36 @@ below; it had been understated ~2.5×) and how combo procs are valued:
 
 | | Median | 10–90% of runs | Runs below 30M |
 |---|---|---|---|
-| **EU, shipped default** | **118M (+1.8M/day)** | **95–163M** | **0%** |
-| · Kaisinel (real sales) | 129M (+2.0M/day) | 92–190M | 0% |
-| · Zikel (borrowed volumes) | 115M | 98–136M | 0% |
-| · Kaisinel if you win only half the buyers assumed | 81M (+1.0M/day) | 61–114M | 0.1% |
-| NA, same shipped default | 164M | 97–304M | 0% |
+| **EU, shipped default** | **120M (+1.8M/day)** | **97–160M** | **0%** |
+| · Kaisinel (real sales) | 131M (+2.0M/day) | 99–186M | 0% |
+| · Zikel (borrowed volumes) | 115M | 96–134M | 0% |
+| · Kaisinel if you win only half the buyers assumed | 83M (+1.1M/day) | 63–110M | 0% |
+| NA, same shipped default | 175M | 108–292M | 0% |
 
 **On Lumiel, plan for +50M to +100M on 30M over 50 days** (the half-buyers and the
 full Kaisinel rows). The app assumes you win 30% of an item's buyers as one more
 seller; nobody can measure that yet, so the lower row is the cautious case. From
-15M, a typical first week ended around 26M (about 9M of it cash, the rest stock
+15M, a typical first week ended around 26.5M (about 9M of it cash, the rest stock
 still listed). The game is new and prices are hard to predict, so refresh often:
 the app keeps re-learning from your own history.
+
+**What 50,000 more runs (30-day paths, Splendents included) changed.** 3,600 runs
+recorded 277,491 trades with what kind of trade each was. Kept only what held on both
+Kaisinel and Zikel:
+
+| Kind of trade | Kaisinel: really made / app expected | Zikel |
+|---|---|---|
+| Splendent used as the base for the next tier | +28% / +291% | −48% / +24% |
+| Needs a Splendent base made through combo procs | +69% / +97% | +10% / +19% |
+| Price swings over ±35% | +54% / +82% | +27% / +33% |
+| Weapons | +17% / +26% | +22% / +26% |
+
+So the app's realistic return now counts a Splendent's next-tier use at a quarter of its
+estimate and scales the other three down (×0.6, ×0.74, ×0.75), and the plan also tries
+filling its 10 slots with the most profitable lines. In a 50,000-run head-to-head (30 days,
+30M, 8 h/day): typical 83.6M → **84.1M**, on Kaisinel 87.1M → **88.2M** with the bad-luck
+case 56.7M → **59.5M**; Zikel unchanged. Small extra profit, but the numbers shown no
+longer promise what Splendent upgrades don't deliver.
 
 **Why buy stock and sell it over days, and when not to.** You can only have 10
 listings up, and each takes ~5 minutes to post, so the listing slots are the

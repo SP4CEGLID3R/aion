@@ -194,3 +194,21 @@ def test_holding_tiers_stop_when_more_kinah_earns_nothing():
     tiny = [op("t", 10_000, 4_000, per_day=2)]   # the market takes 20 units (200k): past the 15%-per-item
     tiers = holding_tiers(tiny, 10)              # cap at ~1.5M budget, more kinah can't help
     assert len(tiers) < 3 and tiers[-1].amount <= 1.5e6
+
+
+def test_realistic_formula_adjusts_for_the_kind_of_trade():
+    from aion_income.opportunities import FORMULA_FACTORS, formula_roi, realistic_roi
+    plain = op("p", 1000, 500, per_day=10)
+    base = realistic_roi(0.5)
+    assert abs(formula_roi(plain) - base) < 1e-9 and abs(plain.real_roi - base) < 1e-9
+    swingy = op("s", 1000, 500, per_day=10)
+    swingy.stats.volatility = 0.5
+    swingy.stats.section = "weapons"
+    assert abs(formula_roi(swingy) - base * FORMULA_FACTORS["swings"] * FORMULA_FACTORS["weapons"]) < 1e-9
+    losing = op("l", 1000, 20, per_day=10)          # ~2% predicted: realistic is negative, never scaled up
+    assert formula_roi(losing) == realistic_roi(0.02) < 0
+
+
+def test_plan_can_fill_slots_with_the_most_profitable_lines():
+    from aion_income.planner import ORDERINGS
+    assert len(ORDERINGS) == 3                      # per kinah, per minute, per slot

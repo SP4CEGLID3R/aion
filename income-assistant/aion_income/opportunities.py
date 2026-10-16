@@ -29,6 +29,39 @@ CALIBRATION = (1.23, -0.09)
 def realistic_roi(pred_roi: float, calibration=CALIBRATION) -> float:
     a, b = calibration
     return a * math.log1p(max(pred_roi, -0.99)) + b
+
+
+# On top of that, what kind of trade it is matters. Learned from 277,491 trades in 3,600 simulated
+# 30-day runs on EU servers, keeping only effects that held on both Kaisinel and Zikel, then checked
+# in 50,000 more runs (better worst-case results, slightly more profit):
+#  - a Splendent used as the base for the next-tier craft made +28% / -48% where +291% / +24% was
+#    expected: that use is counted at a quarter of its estimated value
+#  - crafts needing a Splendent base made through combo procs realised ~60% of the estimate
+#  - big price swings (over ±35%) ~74%, weapons ~75%
+UPGRADE_KEEP = 0.25
+FORMULA_FACTORS = {"combo_base": 0.6, "swings": 0.74, "weapons": 0.75}
+
+
+def formula_roi(op) -> float:
+    """Realistic return of an opportunity: the calibrated return, adjusted for the kind of trade."""
+    c, st = op.craft, op.stats
+    profit = op.profit_unit
+    if c and c.combo_best == "craft":
+        profit -= c.p_combo * c.combo_value * (1 - UPGRADE_KEEP)
+    v = realistic_roi(profit / op.cost_unit if op.cost_unit > 0 else 0.0)
+    if v <= 0:
+        return v
+    if c and any(l.source.how == "combo" for l in c.lines):
+        v *= FORMULA_FACTORS["combo_base"]
+    if st and (st.volatility or 0) > 0.35:
+        v *= FORMULA_FACTORS["swings"]
+    if st and st.section == "weapons":
+        v *= FORMULA_FACTORS["weapons"]
+    return v
+
+
+def op_realistic(op) -> float:
+    return op.real_roi
 RISK_ORDER = {SAFE: 0, MODERATE: 1, RISKY: 2}
 
 MARKET_SHARE = 0.3      # share of an item's daily sales you can expect to win as one more seller
@@ -97,8 +130,8 @@ class Opportunity:
 
     @property
     def real_roi(self) -> float:
-        """What trades like this really returned in simulations (see CALIBRATION)."""
-        return realistic_roi(self.roi)
+        """What trades like this really returned in simulations (see CALIBRATION and formula_roi)."""
+        return formula_roi(self)
 
     @property
     def real_profit_unit(self) -> float:

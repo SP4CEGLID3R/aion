@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .opportunities import CALIBRATION, LISTING_SLOTS, Opportunity, realistic_roi
+from .opportunities import LISTING_SLOTS, Opportunity, op_realistic, realistic_roi
 
 # Defaults learned from simulated 50-day runs on EU and NA servers (see tools/simulate.py); both
 # regions agreed on these:
@@ -56,6 +56,12 @@ def items_trend(ops, market_drift: float | None = None, weights=None) -> float |
     return None
 
 OVERHEAD_MINUTES = 20  # refreshing, walking to the market, buying ingredients
+
+# Ways to rank candidates when filling the plan; the plan keeps whichever earns more. Kinah-bound
+# players are best served by profit per kinah, time-bound ones by profit per minute, and with only
+# 10 listing slots, by profit per slot (the most profitable lines first).
+ORDERINGS = [lambda c: c[3] / c[2], lambda c: c[3] / c[0].minutes_per_day,
+             lambda c: c[3]]  # per slot: +1.1M and a better worst case on Kaisinel in 50,000 30-day runs
 
 HOLD_CAP = 30_000_000  # holding more than this is unrealistic for most players
 
@@ -139,7 +145,7 @@ def _greedy(cands, budget, horizon, minutes_cap, limit, max_share=1.0):
 
 
 def make_plan(ops: list[Opportunity], budget: float, horizon: float = 3.0, limit: int = 25,
-              play_hours: float = 8.0, calibration=CALIBRATION, max_share: float = MAX_SHARE,
+              play_hours: float = 8.0, calibration=op_realistic, max_share: float = MAX_SHARE,
               batch_days: float | None = None) -> Plan:
     """Best use of a budget within the market's limits: at most 10 items listed at once and
     5 minutes per listing, so your playing time caps how much you can sell per day."""
@@ -153,7 +159,7 @@ def make_plan(ops: list[Opportunity], budget: float, horizon: float = 3.0, limit
             cands.append((op,) + t)
     best = []
     # capital-bound and time-bound orderings; keep whichever earns more
-    for key in (lambda c: c[3] / c[2], lambda c: c[3] / c[0].minutes_per_day):
+    for key in ORDERINGS:
         lines = _greedy(sorted(cands, key=key, reverse=True), budget, horizon, minutes_cap, limit, max_share)
         if sum(l.profit for l in lines) > sum(l.profit for l in best):
             best = lines

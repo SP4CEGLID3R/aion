@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from aion_income.engine import Engine, MarketData, Settings  # noqa: E402
 from aion_income.opportunities import LISTING_MINUTES, LISTING_SLOTS  # noqa: E402
-from aion_income.opportunities import CALIBRATION  # noqa: E402
+from aion_income.opportunities import op_realistic  # noqa: E402
 from aion_income.planner import MAX_SHARE, OVERHEAD_MINUTES, make_plan  # noqa: E402
 from aion_income.pricing import counter_days  # noqa: E402
 from aion_income.crafting import combo_success  # noqa: E402
@@ -98,7 +98,7 @@ class Strategy:
     min_market_per_day: float = 0.0
     exclude: tuple = ()          # skip suggestions with a warning containing any of these
     allow_risky_if_only: tuple = ()  # Risky allowed when every warning matches one of these
-    calibration: tuple | None = CALIBRATION  # rank by realistic profit (A, B); None = raw prediction
+    calibration: object = op_realistic  # rank by realistic profit (the app's formula); (A, B) or None = raw
     max_share: float = MAX_SHARE     # most of the budget one item may take
     batch_days: float = 10.0         # buy this many days of sales at once (the app's default 10-day plan)
     sequential: bool = False         # replay real days in order from a random start (keeps real trends)
@@ -186,6 +186,18 @@ class Market:
         return self._ops[key]
 
 
+def trade_features(op) -> dict:
+    """What kind of trade this is, for learning which kinds really pay (see opportunities.FORMULA)."""
+    c, st = op.craft, op.stats
+    combo_share = (c.p_combo * c.combo_value / c.ev) if c and c.ev > 0 else 0.0
+    return {"combo_share": combo_share,
+            "combo_input": bool(c and any(l.source.how == "combo" for l in c.lines)),
+            "combo_craft": bool(c and c.combo_best == "craft"),
+            "has_sales": bool(st and st.sales_basis.startswith("market sales")),
+            "sell_days": op.sell_days if op.sell_days is not None else 30.0,
+            "real_roi_pred": op.real_roi}
+
+
 def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, risks, keep,
              strategy: Strategy | None = None, trades: list | None = None):
     """One 50-day life. Returns (net worth per day, daily log); appends every trade to `trades`."""
@@ -260,7 +272,7 @@ def run_once(mkt: Market, rng, days, start, hours, online_share, offline_share, 
                               "pred_sell": op.sell_price, "market_per_day": op.market_per_day or 0.0,
                               "lot": op.lot, "revenue": 0.0, "sold": 0.0, "out": 0.0,
                               "volatility": op.stats.volatility, "trend_short": op.stats.trend_short,
-                              "listings": op.stats.listings, "realized_price": None})
+                              "listings": op.stats.listings, "realized_price": None, **trade_features(op)})
             lot_of[key] = op.lot
             rate_of[key] = op.market_per_day or 0.0
             if op.method == "Craft":
