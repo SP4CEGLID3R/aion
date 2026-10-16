@@ -57,6 +57,10 @@ const RESUME_KEEP: usize = 3;
 /// How far off the arrow a rectangle's centre is expected (px at UI scale
 /// 1) before the arrow is found.
 const PIVOT_SLACK: f64 = 14.0;
+/// The light disk around the arrow: grey-level spread at most this (it is
+/// plain), and its brightness within this of what was learned.
+const DISK_SPREAD: f64 = 22.0;
+const DISK_DRIFT: f64 = 35.0;
 const RESUME_WITHIN_MS: Millis = 120_000;
 const RESUME_TRY_MS: Millis = 10_000;
 const RESUME_HEALTHY: u64 = 10;
@@ -123,6 +127,10 @@ pub struct Step {
     /// The pivot moved to where the arrow really is, on this frame: what
     /// was measured around the old one (the ring) is to be measured again.
     pub recentred: bool,
+    /// The light disk around the arrow looks as it does on the minimap: the
+    /// frame shows the minimap, not the big map, a dialog or a loading screen
+    /// over its spot. True until the disk's look has been learned.
+    pub disk_ok: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -165,6 +173,10 @@ pub struct MinimapTracker {
     scale: f64,
     cfg: TrackerConfig,
     finder: Option<PivotFinder>,
+    /// Typical brightness of the light disk around the arrow, learned on
+    /// frames that tracked well.
+    disk_ref: Option<f64>,
+    disk_now: Option<(f64, f64)>,
     cor: Correlator,
     key_px: f64,
     ring_r: Option<f64>,
@@ -249,6 +261,8 @@ impl MinimapTracker {
             last_print: None,
             same_since: None,
             stats: TrackerStats::default(),
+            disk_ref: None,
+            disk_now: None,
             finder: cfg.locate_pivot.then(|| PivotFinder::new(w, h, ds, scale)),
             cfg,
         }
@@ -287,6 +301,55 @@ impl MinimapTracker {
         self.cone_masks.clear();
         self.cone = None;
         self.ring_r = None;
+        self.disk_ref = None;
+    }
+
+    /// Whether this frame's arrow disk looks like the minimap's; learns its
+    /// look from frames that `learn` (tracked well).
+    fn check_disk(&mut self, learn: bool) -> bool {
+        let Some((mean, sd)) = self.disk_now else {
+            return true; // black or odd-sized frames are flagged otherwise
+        };
+        let ok = self
+            .disk_ref
+            .is_none_or(|r| sd <= DISK_SPREAD && (mean - r).abs() <= DISK_DRIFT);
+        if learn && sd <= DISK_SPREAD && ok {
+            self.disk_ref = Some(self.disk_ref.map_or(mean, |r| r + 0.05 * (mean - r)));
+        }
+        ok
+    }
+
+    /// Mean and spread of the grey ring inside the arrow's light disk
+    /// (outside the arrow, which turns with the character).
+    fn disk_stats(&self, gray: &Plane) -> Option<(f64, f64)> {
+        let r = DISK_R * self.scale;
+        let (r0, r1) = (0.45 * r, 0.75 * r);
+        let (px, py) = (self.pivot.0.round() as isize, self.pivot.1.round() as isize);
+        let m = r1.ceil() as isize;
+        let (mut n, mut sum, mut sq) = (0.0, 0.0, 0.0);
+        for dy in -m..=m {
+            for dx in -m..=m {
+                let d = (dx as f64).hypot(dy as f64);
+                let (x, y) = (px + dx, py + dy);
+                if d < r0
+                    || d > r1
+                    || x < 0
+                    || y < 0
+                    || x >= gray.w as isize
+                    || y >= gray.h as isize
+                {
+                    continue;
+                }
+                let v = gray.at(x as usize, y as usize);
+                n += 1.0;
+                sum += v;
+                sq += v * v;
+            }
+        }
+        (n > 0.0).then(|| {
+            let mean = sum / n;
+            (mean, (sq / n - mean * mean).max(0.0).sqrt())
+        })
     }
 
     pub fn downsample(&self) -> usize {
@@ -435,13 +498,16 @@ impl MinimapTracker {
             frozen: false,
             ring_r: None,
             recentred: false,
+            disk_ok: true,
         }
     }
 
     /// Track one frame (`t` in the packet clock).
     pub fn step(&mut self, t: Millis, frame: &Bgra) -> Step {
         let started = Instant::now();
+        self.disk_now = None;
         let mut out = self.step_inner(t, frame);
+        out.disk_ok = self.check_disk(out.good && !out.recentred);
         self.stats.last_ms = started.elapsed().as_secs_f64() * 1000.0;
         // Frozen capture: identical pixels for a while.
         let print = frame.fingerprint();
@@ -516,6 +582,7 @@ impl MinimapTracker {
                 }
             }
         }
+        self.disk_now = self.disk_stats(&gray);
         let small = if self.ds == 2 { gray.half() } else { gray };
         let small = crop(&small, self.w, self.h);
         let mut mask = self.base_mask();

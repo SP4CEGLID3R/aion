@@ -741,6 +741,11 @@ impl MinimapFusion {
         (s >= CONE_CLEAR && t - ct <= STALE_FRAME_MS).then_some(c)
     }
 
+    /// The latest minimap picture shows where we are at the known scale.
+    pub fn picture_ok(&self, t: Millis) -> bool {
+        self.ring_odd == 0 && self.locate(t).kind == LocKind::Live
+    }
+
     pub fn px_per_m(&self) -> f64 {
         self.k * self.units_per_m
     }

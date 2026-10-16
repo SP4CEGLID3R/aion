@@ -606,7 +606,9 @@ fn minimap_frame(state: State<'_, AppState>, after: u64) -> tauri::ipc::Response
         return tauri::ipc::Response::new(Vec::new());
     };
     let view = link.view();
-    tauri::ipc::Response::new(shared.frame_after(after, view.px_per_m, view.calibrated))
+    // The picture is drawn only while it is the minimap being followed.
+    let px_per_m = view.px_per_m.filter(|_| view.picture_ok);
+    tauri::ipc::Response::new(shared.frame_after(after, px_per_m, view.calibrated))
 }
 
 /// Puts a shortcut to this app on the desktop (Windows: a normal .lnk, made

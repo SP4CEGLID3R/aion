@@ -52,6 +52,13 @@ how far it is and whether it is up or down.
 
 ### Fixed
 
+- The radar could suddenly show a hugely zoomed-in map: whatever was on
+  screen at the minimap's spot (the big map, a dialog, a loading screen) or
+  a minimap at a new zoom was drawn as if it were the minimap. The game's
+  minimap is now drawn only while it is the one being followed at the known
+  scale (its arrow disk is checked on every frame); otherwise the radar
+  shows its plain grid until it is.
+
 - With *click-through* on, the radar's settings button could not be
   clicked and there was no other way back to the settings: **Ctrl+Alt+S**
   now opens them at any time, also while the game has focus.

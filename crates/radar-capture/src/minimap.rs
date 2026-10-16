@@ -58,6 +58,10 @@ pub struct MinimapView {
     pub camera_deg: Option<f64>,
     /// Calibration legs so far (0 = seeded scale only).
     pub legs: u32,
+    /// The minimap picture is the one being followed, at the known scale:
+    /// worth drawing. Not while the track is broken (the big map or a dialog
+    /// over the minimap) or a zoom change is being checked.
+    pub picture_ok: bool,
 }
 
 const MAX_QUEUED: usize = 256;

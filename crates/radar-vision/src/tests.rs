@@ -464,3 +464,49 @@ fn standing_still_never_moves_the_pivot() {
     assert!(!tr.pivot_found());
     assert_eq!(tr.pivot(), (155.5, 103.0));
 }
+
+#[test]
+fn the_big_map_over_the_minimap_is_told_apart_from_the_minimap() {
+    // 30 s walking; from 15 s to 20 s something else covers the minimap's
+    // spot (the big map: another map, no arrow disk, no cone).
+    let (w, h) = (311, 206);
+    let map = SynthMap::new(1600, 1300, 7);
+    let big = SynthMap::new(1600, 1300, 11);
+    let mut tr = MinimapTracker::new(w, h, TrackerConfig::default());
+    let (mut false_alarms, mut missed, mut covered) = (0, 0, 0);
+    for i in 0..300i64 {
+        let t = 1_790_000_000_000 + i * 100;
+        let (x, y) = path(i * 100);
+        let s = i as f64 / 10.0;
+        let cover = (150..200).contains(&i);
+        let px = if cover {
+            let bare = Overlay {
+                ui_scale: 0.01,
+                ring_r: 0.0,
+                ..Overlay::default()
+            };
+            frame(&big, 800.0, 650.0, w, h, &bare)
+        } else {
+            let ov = Overlay {
+                cone: (20.0 + 40.0 * (s / 5.0).sin()).rem_euclid(360.0),
+                facing: (90.0 + 30.0 * (s / 3.0).cos()).rem_euclid(360.0),
+                ..Overlay::default()
+            };
+            frame(&map, x, y, w, h, &ov)
+        };
+        let st = tr.step(t, &Bgra::packed(w, h, &px).unwrap());
+        if cover {
+            covered += 1;
+            if st.disk_ok {
+                missed += 1;
+            }
+        } else if !st.disk_ok {
+            false_alarms += 1;
+        }
+    }
+    assert_eq!(false_alarms, 0, "minimap frames taken for something else");
+    assert_eq!(
+        missed, 0,
+        "of {covered} covered frames, {missed} passed as the minimap"
+    );
+}

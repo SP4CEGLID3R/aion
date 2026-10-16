@@ -65,6 +65,8 @@ pub struct LatestFrame {
     pub w: u32,
     pub h: u32,
     pub pivot: (f32, f32),
+    /// The frame shows the minimap (its arrow disk), not something over it.
+    pub disk_ok: bool,
     pub rgba: Vec<u8>,
 }
 
@@ -96,6 +98,8 @@ impl Shared {
         out.extend(f.h.to_le_bytes());
         out.extend(f.pivot.0.to_le_bytes());
         out.extend(f.pivot.1.to_le_bytes());
+        // No scale = not drawn: only the minimap itself is drawn behind the radar.
+        let px_per_m = px_per_m.filter(|_| f.disk_ok);
         out.extend((px_per_m.unwrap_or(0.0) as f32).to_le_bytes());
         out.extend(u32::from(calibrated).to_le_bytes());
         out.extend(&f.rgba);
@@ -251,6 +255,7 @@ fn run(
             w: w as u32,
             h: h as u32,
             pivot: (pivot.0 as f32, pivot.1 as f32),
+            disk_ok: step.disk_ok,
             rgba,
         });
         {

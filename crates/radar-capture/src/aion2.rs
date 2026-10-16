@@ -648,6 +648,7 @@ impl Aion2Decoder {
             reason: st.reason,
             camera_deg: self.camera_heading(self.last_t),
             legs: st.legs,
+            picture_ok: self.minimap.picture_ok(self.last_t),
         }
     }
 
