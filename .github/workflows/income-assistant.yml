@@ -3,11 +3,12 @@ name: Income Assistant
 on:
   push:
     branches: [main, "claude/**"]
-    tags: ["income-v*"]   # a tag like income-v1.0.0 publishes a public download (GitHub Release)
     paths: ["income-assistant/**", ".github/workflows/income-assistant.yml"]
   pull_request:
     paths: ["income-assistant/**", ".github/workflows/income-assistant.yml"]
   workflow_dispatch:
+  release:
+    types: [published]   # publishing a release tagged income-v* attaches the .exe to it
 
 defaults:
   run:
@@ -50,10 +51,10 @@ jobs:
           path: income-assistant/dist/Aion2IncomeAssistant.exe
           if-no-files-found: error
       - name: Publish release (income-v* tags only)
-        if: startsWith(github.ref, 'refs/tags/income-v')
+        if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'income-v')
         uses: softprops/action-gh-release@v2
         with:
-          name: Kinah Forge (Aion 2 Income Assistant) ${{ github.ref_name }}
+          tag_name: ${{ github.event.release.tag_name }}
           files: income-assistant/dist/Aion2IncomeAssistant.exe
           body: |
             **Download `Aion2IncomeAssistant.exe` below and double-click it.** Windows 10/11, nothing to install.
