@@ -130,6 +130,7 @@ class Analysis:
     ctx: CraftContext
     crafts: list
     ops: list
+    splendents: list = field(default_factory=list)  # Splendent items you get from combo procs, priced from scratch
 
 
 def faction_code(server: dict) -> str:
@@ -256,13 +257,15 @@ class Engine:
                 ordered.append(k)
         for res in sorted(a.crafts, key=lambda c: c.profit, reverse=True)[:30]:
             add(res.out_key)
-            if res.combo_key:
-                add(res.combo_key)
+            if res.recipe.combo:   # Splendent versions: big prices, need their own history
+                add(res.recipe.combo)
             for line in res.lines:
                 if line.source.how in ("buy", "bulk"):
                     add(line.key)
                 if line.source.how == "morph" and line.source.via:
                     add(line.source.via)
+        for sp in sorted(a.splendents, key=lambda s: -(s.sell or 0))[:25]:
+            add(sp.out_key)
         for od in {od for od, _ in a.ctx.book.morph.values()}:
             add(od)
         busy = sorted((s for s in a.stats.values() if s.ask and s.listings >= 3 and "(Bound)" not in s.name),
@@ -341,7 +344,7 @@ class Engine:
                            settings.overrides)
         crafts = ctx.evaluate_all()
         ops = all_opportunities(ctx, crafts)
-        return Analysis(data, stats, ctx, crafts, ops)
+        return Analysis(data, stats, ctx, crafts, ops, ctx.splendent_rows(crafts))
 
     def refresh(self, settings: Settings, progress=lambda msg, frac: None) -> Analysis:
         data = self.download(settings, progress)

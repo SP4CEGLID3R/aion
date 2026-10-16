@@ -125,6 +125,7 @@ class CraftResult:
     combo_best: str = ""           # "sell" or "craft"
     combo_use_outlet: tuple = ()   # (next-tier item key, its success, its output qty, Splendents per craft)
     combo_use_ok: bool = True      # the next-tier item has a trusted price and a sales record
+    missing: list = field(default_factory=list)  # ingredients you can't buy or craft (drops, NPC/quest items)
     combo_cost: float | None = None   # kinah per Splendent made this way from scratch (normal results sold)
     combo_price: float | None = None  # what that Splendent sells for on the market (before tax)
 
@@ -133,6 +134,63 @@ class CraftResult:
         """Average kinah per finished item, failed attempts included."""
         made = self.success * self.recipe.out_qty
         return self.cost / made if made > 0 else float("inf")
+
+
+@dataclass
+class SplendentRow:
+    """A Splendent (combo) item shown in its own row: you get it by crafting `parent` and hoping
+    for the combo proc. Quacks like a CraftResult for the Crafting table."""
+    parent: CraftResult
+    name: str
+    out_key: str
+    success: float          # chance per attempt of the parent craft to give this Splendent
+    cost: float             # kinah per piece made from scratch (normal results sold on the way)
+    sell: float | None      # market price (before tax)
+    net: float | None       # what one piece brings after tax
+    sales_per_day: float | None
+    lines: list             # parent ingredients per piece (attempts per piece included)
+    is_splendent: bool = True
+    combo_name: str = ""
+    combo_cost: float | None = None
+    combo_price: float | None = None
+    combo_value: float = 0.0
+    combo_best: str = ""
+    combo_use_name: str = ""
+    combo_use: float | None = None
+    combo_sell: float | None = None
+    notes: list = field(default_factory=list)
+
+    @property
+    def recipe(self):
+        return self.parent.recipe
+
+    @property
+    def profession(self):
+        return self.parent.profession
+
+    @property
+    def priced(self) -> bool:
+        return self.net is not None
+
+    @property
+    def avg_cost_item(self) -> float:
+        return self.cost
+
+    @property
+    def ev(self) -> float:
+        return self.net or 0.0
+
+    @property
+    def profit(self) -> float:
+        return (self.net - self.cost) if self.net is not None else 0.0
+
+    @property
+    def profit_pessimistic(self) -> float:
+        return self.profit
+
+    @property
+    def attempts_per_piece(self) -> float:
+        return 1 / self.success if self.success > 0 else float("inf")
 
 
 class CraftContext:
@@ -201,9 +259,11 @@ class CraftContext:
                 best, used = b, alt
         return used, best
 
-    def run_inputs(self, r: Recipe, free: frozenset = frozenset()):
+    def run_inputs(self, r: Recipe, free: frozenset = frozenset(), allow_missing: bool = False):
         """Cost per attempt and ingredient lines; `free` items are ones you already own (e.g. a
-        Splendent from a combo proc) and cost nothing here."""
+        Splendent from a combo proc) and cost nothing here. With allow_missing, an ingredient that
+        can't be bought or crafted (a drop, an NPC or quest item) is listed at no cost instead of
+        making the recipe impossible."""
         cost = float(r.gold or 0)
         lines = []
         for key, qty, alt in r.inputs:
@@ -211,6 +271,11 @@ class CraftContext:
                 lines.append(Line(key, self.book.name(key), qty, 0.0, Source(0.0, "own", "your Splendent from a combo")))
                 continue
             used, src = self._offer(key, alt)
+            if src is None and allow_missing:
+                lines.append(Line(key, self.book.name(key), qty, 0.0,
+                                  Source(0.0, "missing", "not on the market and no recipe: NPC shop, drop or quest "
+                                                         "item, not included in the cost")))
+                continue
             if src is None:
                 return None
             if src.how == "bulk" and qty <= 3:
@@ -302,18 +367,24 @@ class CraftContext:
             return None
         run = self.run_inputs(r, free)
         if not run:
-            return None
+            run = self.run_inputs(r, free, allow_missing=True)  # still show it, with what's missing named
         cost, lines = run
+        missing = [l.name for l in lines if l.source.how == "missing"]
         out = self.stats.get(r.out)
         name = self._name(r.out)
         prof = PROFESSIONS.get(r.profession, r.profession)
         if not out or out.sell_price is None or out.expected_sell is None:
             # nobody has listed it in the history we have: show what it costs, not a profit
+            csrc = self.combo_source(r, cost, s) if r.combo else None
+            cst = self.stats.get(r.combo) if r.combo else None
             return CraftResult(
-                recipe=r, name=name, profession=prof, success=s, combo_rate=0.0, cost=cost, lines=lines,
-                p_fail=1 - s, p_plain=s, p_combo=0.0, plain_value=0.0, combo_value=0.0, ev=0.0, profit=0.0,
-                ev_pessimistic=0.0, profit_pessimistic=0.0, profit_plain_only=0.0, out_key=r.out, combo_key=None,
-                notes=["no market price for it yet"], priced=False, price_ok=False)
+                recipe=r, name=name, profession=prof, success=s,
+                combo_rate=combo_success(self.book, r, int(self.levels.get(r.profession, 0)), s), cost=cost,
+                lines=lines, p_fail=1 - s, p_plain=s, p_combo=0.0, plain_value=0.0, combo_value=0.0, ev=0.0,
+                profit=0.0, ev_pessimistic=0.0, profit_pessimistic=0.0, profit_plain_only=0.0, out_key=r.out,
+                combo_key=None, notes=["no market price for it yet"], priced=False, price_ok=False, missing=missing,
+                combo_name=self._name(r.combo) if r.combo else "", combo_cost=csrc.cost if csrc else None,
+                combo_price=cst.sell_price if cst else None)
         cs = combo_success(self.book, r, int(self.levels.get(r.profession, 0)), s)
         cp = r.combo_chance if r.combo else 0.0
         combo_st = self.stats.get(r.combo) if r.combo else None
@@ -345,6 +416,8 @@ class CraftContext:
             notes.append("Splendent version has no reliable price or use, counted as a normal item")
         if any(l.source.how == "npc" and "estimated" in l.source.detail for l in lines):
             notes.append("uses an NPC item with an estimated price")
+        if missing:
+            notes.append("cost leaves out " + ", ".join(missing) + " (not on the market, no recipe)")
         csrc = self.combo_source(r, cost, s) if r.combo else None
         return CraftResult(
             recipe=r, name=name, profession=prof,
@@ -355,7 +428,7 @@ class CraftContext:
             price_ok=out.trusted, combo_name=self._name(r.combo) if r.combo else "",
             combo_sell=sell, combo_use=use, combo_use_name=use_name, combo_best=best,
             combo_use_outlet=outlet if best == "craft" else (), combo_use_ok=use_ok or best != "craft",
-            combo_cost=csrc.cost if csrc else None,
+            combo_cost=csrc.cost if csrc else None, missing=missing,
             combo_price=(combo_st.sell_price if combo_st else None),
         )
 
@@ -398,6 +471,35 @@ class CraftContext:
             if k not in best or res.profit > best[k].profit:
                 best[k] = res
         return sorted(best.values(), key=lambda c: c.profit, reverse=True)
+
+    def splendent_rows(self, crafts: list[CraftResult]) -> list[SplendentRow]:
+        """One row per Splendent item you can get through a combo proc, priced from scratch."""
+        rows: dict[str, SplendentRow] = {}
+        for c in crafts:
+            r = c.recipe
+            if not r.combo or not r.combo_chance or c.combo_cost is None:
+                continue
+            p = c.success * r.combo_chance * combo_success(self.book, r, int(self.levels.get(r.profession, 0)),
+                                                             c.success)
+            if p <= 0:
+                continue
+            st = self.stats.get(r.combo)
+            sell = st.sell_price if st else None
+            net = st.expected_sell * self.keep if st and st.expected_sell else None
+            per = 1 / p
+            lines = [Line(l.key, l.name, l.qty * per, l.unit, l.source) for l in c.lines]
+            row = SplendentRow(parent=c, name=self._name(r.combo), out_key=r.combo, success=p, cost=c.combo_cost,
+                               sell=sell, net=net, sales_per_day=st.sales_per_day if st else None, lines=lines)
+            if c.missing:
+                row.notes.append("cost leaves out " + ", ".join(c.missing) + " (not on the market, no recipe)")
+            if st is None or st.sell_price is None:
+                row.notes.append("not on the market right now")
+            elif not st.trusted or not (st.sales_per_day or 0) > 0:
+                row.notes.append("no sales record yet: its price may only be an asking price")
+            cur = rows.get(r.combo)
+            if cur is None or row.cost < cur.cost:
+                rows[r.combo] = row
+        return sorted(rows.values(), key=lambda x: x.profit, reverse=True)
 
     def cheapest_source(self, key: str) -> Source | None:
         return self.acq.get(key)

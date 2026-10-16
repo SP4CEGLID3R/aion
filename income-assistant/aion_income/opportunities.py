@@ -226,8 +226,8 @@ def combo_outlet(res: CraftResult, ctx: CraftContext) -> float:
 
 
 def craft_opportunity(res: CraftResult, ctx: CraftContext) -> Opportunity | None:
-    if not res.priced or res.profit <= 0:
-        return None
+    if not res.priced or res.profit <= 0 or res.missing:
+        return None  # no price, no profit, or a cost we can't complete (an ingredient nobody sells)
     st = ctx.stats[res.out_key]
     outputs_per_attempt = res.success * res.recipe.out_qty
     market = st.sales_per_day

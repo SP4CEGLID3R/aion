@@ -70,3 +70,17 @@ def test_splendent_shows_its_craft_from_scratch_cost_even_when_buying_is_cheaper
     assert made.how == "combo" and made.cost > 1_000
     res = next(c for c in ctx.evaluate_all() if c.out_key == "sword")
     assert res.combo_cost == pytest.approx(made.cost) and res.combo_price == 1_000
+
+
+def test_every_splendent_gets_its_own_row():
+    st = {"ore": stats("ore", "Pure Orichalcum Ore", 100), "sword": stats("sword", "Orichalcum Longsword", 2_000),
+          "ssword": stats("ssword", "Splendent Orichalcum Longsword", 90_000)}
+    ctx = ctx_for(st, [SWORD])
+    crafts = ctx.evaluate_all()
+    rows = ctx.splendent_rows(crafts)
+    assert [r.out_key for r in rows] == ["ssword"]
+    sp = rows[0]
+    s = ctx.chance(SWORD)
+    assert sp.success == pytest.approx(s * 0.25 * combo_success(ctx.book, SWORD, 3, s))
+    assert sp.cost == pytest.approx(ctx.made["ssword"].cost) and sp.profit == pytest.approx(sp.net - sp.cost)
+    assert sp.lines[0].qty == pytest.approx(SWORD.inputs[0][1] / sp.success)   # ingredients per piece

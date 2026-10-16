@@ -130,11 +130,15 @@ def test_splendent_from_a_combo_is_used_for_the_next_tier_when_worth_more():
     assert res.combo_best == "sell" and res.combo_sell > res.combo_use
 
 
-def test_unbuyable_input_skips_recipe():
+def test_unbuyable_input_is_shown_but_never_recommended():
+    from aion_income.opportunities import craft_opportunity
     r = Recipe(**{**SWORD.__dict__, "inputs": [("elyos", 1, None)]})
     st = {"sword": stats("sword", "Orichalcum Longsword", 10_000)}
     ctx = CraftContext(mini_book([r]), st, {"blacksmithing": 3}, "dark", 0.88)
-    assert ctx.evaluate(r) is None
+    res = ctx.evaluate(r)
+    assert res.missing == ["Yggdrasil Thing"] and res.lines[0].source.how == "missing"
+    assert craft_opportunity(res, ctx) is None          # its cost is incomplete: never a recommendation
+    assert ctx.cheapest_source("sword") is None or ctx.cheapest_source("sword").how != "craft"  # never feeds others
 
 
 def test_crafted_intermediate_used_when_cheaper():

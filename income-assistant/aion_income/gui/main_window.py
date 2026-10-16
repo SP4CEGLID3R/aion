@@ -441,6 +441,43 @@ class MainWindow(QMainWindow):
         o = selected_row(self.best_view)
         self.best_detail.setHtml(self.opportunity_html(o) if o else self._empty_detail("Select a row."))
 
+    def splendent_html(self, sp) -> str:
+        """How to get a Splendent item and what one costs from scratch."""
+        p, c = sp.parent, sp
+        out = [f"<h2>{esc(sp.name)}</h2>",
+               f"<p>{pill_html('Splendent', theme.GOLD)}&nbsp;&nbsp;<span class='muted'>from combo procs when crafting "
+               f"{esc(p.name)} · {esc(p.profession.split(' (')[0])} · recipe lv {p.recipe.level}</span></p>",
+               "<table cellspacing=0><tr>",
+               stat_cell("Cost / piece", kinah(sp.cost), theme.TEXT),
+               stat_cell("Sells at", kinah(sp.sell) if sp.sell else "—", theme.TEXT),
+               stat_cell("Gain / piece", kinah(sp.profit, True) if sp.priced else "—",
+                         theme.GREEN if sp.profit > 0 else theme.RED),
+               stat_cell("Chance / attempt", f"{sp.success:.1%}", theme.GOLD),
+               stat_cell("Sold / day", self._sales_text(sp.out_key)),
+               "</tr></table>"]
+        if sp.notes:
+            out.append("<p><span class='warnhead'>WATCH OUT</span><br>"
+                       + "<br>".join(f"<span class='warn'>⚠ {esc(n)}</span>" for n in sp.notes) + "</p>")
+        out.append(
+            f"<p><b>How to get it:</b> craft <b>{esc(p.name)}</b> (your success ≈ {p.success:.1%}). About "
+            f"<span class='gold'>{sp.success:.1%}</span> of attempts (≈ 1 in {sp.attempts_per_piece:.0f}) proc "
+            f"<b>{esc(sp.name)}</b>. One piece costs about <b>{kinah(sp.cost)}</b> from scratch: every ingredient "
+            f"bought or made the cheapest way, failed attempts included, and the normal {esc(p.name)} you make on "
+            f"the way sold at their low-end price"
+            + (f". It sells for about {kinah(sp.sell)} ({kinah(sp.net)} after tax)." if sp.sell else ".")
+            + "</p>")
+        out.append("<table cellspacing=0><tr><th>INGREDIENT (PER PIECE)</th><th align=right>QTY</th>"
+                   "<th align=right>UNIT</th><th align=right>TOTAL</th><th>CHEAPEST SOURCE</th></tr>")
+        for line in sp.lines:
+            out.append(f"<tr><td>{esc(line.name)}</td><td align=right>{line.qty:,.1f}</td>"
+                       f"<td align=right>{kinah(line.unit)}</td><td align=right>{kinah(line.unit * line.qty)}</td>"
+                       f"<td class='muted'>{esc(line.source.detail)}</td></tr>")
+        out.append("</table>")
+        if c.parent.combo_best:
+            out.append(f"<p class='muted'>Its profit is also counted in {esc(p.name)}'s row (Best ways to earn) "
+                       f"when it has real buyers.</p>")
+        return "".join(out)
+
     def craft_extra_html(self, c) -> str:
         """Average cost per finished item, and what to do with Splendent pieces from combo procs."""
         out = [f"<p><span class='muted'>Average cost per finished item (failures included):</span> "
@@ -739,21 +776,27 @@ class MainWindow(QMainWindow):
         top.addWidget(self.craft_search)
         lay.addLayout(top)
         cols = [
-            Column("Item", lambda c: c.name.lower(), lambda c: c.name, width=290, bold=True),
+            Column("Item", lambda c: c.name.lower(), lambda c: ("✦ " + c.name) if getattr(c, "is_splendent", False) else c.name,
+                   width=320, bold=True, color=lambda c: theme.GOLD if getattr(c, "is_splendent", False) else None,
+                   tip=lambda c: (f"Splendent: you get it from combo procs when crafting {c.parent.name}"
+                                  if getattr(c, "is_splendent", False) else "")),
             Column("Profession", lambda c: c.profession, lambda c: c.profession.split(" (")[0], width=140,
                    color=lambda c: theme.MUTED),
             Column("Lvl", lambda c: c.recipe.level, align="right", width=60),
             Column("Success", lambda c: c.success, lambda c: f"{c.success:.1%}"
                    + (" ✎" if c.recipe.id in self.settings.overrides else ""), align="right", width=95,
                    color=lambda c: theme.VIOLET if c.recipe.id in self.settings.overrides else None,
-                   tip=lambda c: "Estimated from your level; set your in-game value below"),
+                   tip=lambda c: (f"Chance per {c.parent.name} attempt to get this Splendent (≈ 1 in "
+                                  f"{c.attempts_per_piece:.0f})" if getattr(c, "is_splendent", False)
+                                  else "Estimated from your level; set your in-game value below")),
             Column("Cost / craft", lambda c: c.cost, lambda c: kinah(c.cost), align="right"),
             Column("Avg cost / item", lambda c: c.avg_cost_item, lambda c: kinah(c.avg_cost_item), align="right",
                    width=130, tip=lambda c: "Average kinah per finished item, failed attempts included"),
             Column("Expected back", lambda c: c.ev, lambda c: kinah(c.ev) if c.priced else "no price", align="right",
                    width=120),
             Column("Profit / craft", lambda c: c.profit if c.priced else float("-inf"),
-                   lambda c: kinah(c.profit, True) if c.priced else "—", align="right", bold=True,
+                   lambda c: (kinah(c.profit, True) + (" *" if getattr(c, "missing", None) else "")) if c.priced else "—",
+                   align="right", bold=True,
                    color=lambda c: theme.GREEN if c.profit > 0 else theme.RED, width=120),
             Column("If prices dip", lambda c: c.profit_pessimistic if c.priced else float("-inf"),
                    lambda c: kinah(c.profit_pessimistic, True) if c.priced else "—",
@@ -851,13 +894,20 @@ class MainWindow(QMainWindow):
         self.override_spin.blockSignals(True)
         self.override_spin.setValue(self.settings.overrides.get(c.recipe.id, 0.0))
         self.override_spin.blockSignals(False)
+        if getattr(c, "is_splendent", False):
+            self.craft_detail.setHtml(self.splendent_html(c))
+            return
         op = next((o for o in self.analysis.ops if o.craft is c), None) if self.analysis else None
         if op:
             self.craft_detail.setHtml(self.opportunity_html(op))
         else:
             lines = "".join(f"<tr><td>{esc(l.name)}</td><td align=right>{l.qty}</td><td align=right>{kinah(l.unit)}</td>"
                             f"<td class='muted'>{esc(l.source.detail)}</td></tr>" for l in c.lines)
-            if not c.priced:
+            if c.missing:
+                verdict = (f"<p class='amber'>Needs {esc(', '.join(c.missing))}, which nobody sells on the market and "
+                           f"no recipe makes (an NPC shop, drop or quest item). The cost below leaves it out, so this "
+                           f"is only worth it if you already have it or get it cheaply.</p>")
+            elif not c.priced:
                 verdict = (f"<p class='amber'>No market price for it yet, so no profit estimate: cost "
                            f"{kinah(c.cost)} per attempt (success {c.success:.1%}).</p>")
             elif c.profit > 0:
@@ -1384,7 +1434,7 @@ class MainWindow(QMainWindow):
         a = self.analysis
         self.best_model.set_rows(a.ops)
         self._apply_best_filter()
-        self.craft_model.set_rows(a.crafts)
+        self.craft_model.set_rows(a.crafts + a.splendents)
         self._apply_craft_filter()
         secs = sorted({s.section for s in a.stats.values() if s.section})
         cur = self.market_section.currentData()
@@ -1401,7 +1451,8 @@ class MainWindow(QMainWindow):
         n_levels = any(self.settings.levels.values())
         self.craft_hint.setText(
             f"{len(a.crafts)} recipes you can craft at your levels ({sum(1 for c in a.crafts if c.priced)} with a "
-            f"market price). Levels apply as soon as you change them in Settings."
+            f"market price) + {len(a.splendents)} Splendent items (✦) you get from their combo procs. Levels apply "
+            f"as soon as you change them in Settings."
             if n_levels else "Set your crafting levels in Settings to see recipes.")
         self._update_plan()
         self._update_banner()
