@@ -63,7 +63,8 @@ the radar.
 
 * Transparent, borderless, resizable, always-on-top overlay that doesn't
   steal focus from the game. Optional **click-through**; **Ctrl+Alt+S**
-  opens the settings at any time.
+  opens the settings at any time. Optionally **shown only when a cube is on
+  it** (**Ctrl+Tab** switches): invisible and click-through otherwise.
 * **Separate-window mode**: a normal framed window that does not stay on top.
 * Player marker with the camera direction (read from the minimap's view
   cone) or the direction you are moving. Cube markers with labels and

@@ -45,6 +45,8 @@ export interface Backend {
   screenshotMonitor(index: number): Promise<Screenshot>;
   /** Puts a shortcut to the app on the desktop; returns its path. */
   createDesktopShortcut(): Promise<string>;
+  /** The radar shows nothing right now: let clicks through to the game. */
+  setRadarHidden(hidden: boolean): Promise<void>;
 }
 
 /** Layout written by `minimap::Shared::frame_after` in the Rust shell. */
@@ -111,6 +113,7 @@ const tauriBackend: Backend = {
   defaultMinimapRegion: (index) => invoke<ScreenRegion>("default_minimap_region", { index }),
   screenshotMonitor: async (index) => parseScreenshot(await invoke<ArrayBuffer>("screenshot_monitor", { index })),
   createDesktopShortcut: () => invoke<string>("create_desktop_shortcut"),
+  setRadarHidden: (hidden) => invoke<void>("set_radar_hidden", { hidden }),
 };
 
 const PREVIEW_KEY = "aion2-radar-preview-settings";
@@ -167,6 +170,7 @@ function previewBackend(): Backend {
     createDesktopShortcut: async () => {
       throw new Error("Shortcuts can be made only in the desktop app.");
     },
+    setRadarHidden: async () => {},
     onSettings: async (cb) => {
       listeners.add(cb);
       const onStorage = (e: StorageEvent) => e.key === PREVIEW_KEY && cb(load());

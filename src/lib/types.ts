@@ -292,6 +292,8 @@ export interface RadarSettings {
   staleRetainSecs: number;
   windowMode: WindowMode;
   clickThrough: boolean;
+  /** Overlay only: invisible (and click-through) while no cube is drawn. */
+  hideWhenEmpty: boolean;
   updateHz: number;
   dataSource: DataSourceConfig;
   coordinateTransform: CoordinateTransform;
@@ -369,6 +371,7 @@ export const DEFAULT_SETTINGS: RadarSettings = {
   staleRetainSecs: 30,
   windowMode: "overlay",
   clickThrough: false,
+  hideWhenEmpty: false,
   updateHz: 20,
   dataSource: { kind: "synthetic", seed: 7, cubeCount: 6 },
   coordinateTransform: {

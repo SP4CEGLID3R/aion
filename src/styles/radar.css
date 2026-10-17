@@ -28,6 +28,13 @@ body.separate {
   display: flex;
   flex-direction: column;
   height: 100%;
+  transition: opacity 0.2s;
+}
+
+/* "Show the radar only when a cube is on it", with no cube: nothing shows
+   (the inline opacity setting is overridden). */
+body.auto-hidden #root {
+  opacity: 0 !important;
 }
 
 #toolbar {

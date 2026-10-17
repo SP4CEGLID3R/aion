@@ -9,6 +9,12 @@ how far it is and whether it is up or down.
 
 ### Added
 
+- **Show the radar only when a cube is on it** (Settings → Radar, or
+  **Ctrl+Tab** to switch it on and off): while no cube is drawn the radar is
+  invisible and clicks go through it to the game; it appears as soon as a
+  cube is on it and goes 1.5 s after the last one left. Sounds and beeps work
+  as usual. Overlay mode only.
+
 - **Minimap tracking.** The game's minimap is read from the screen (like a
   screenshot) about 10 times a second and its scroll is measured, so your
   position updates between the server's own reports. Its scale is learned from

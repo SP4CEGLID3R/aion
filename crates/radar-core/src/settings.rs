@@ -282,6 +282,9 @@ pub struct RadarSettings {
     pub window_mode: WindowMode,
     /// Overlay mode only: mouse clicks pass through to the window below.
     pub click_through: bool,
+    /// Overlay mode only: the radar is invisible, and lets clicks through,
+    /// while no cube is drawn on it. Sounds and beeps work as usual.
+    pub hide_when_empty: bool,
     /// Frames pushed to the renderer per second.
     pub update_hz: u32,
     pub data_source: DataSourceConfig,
@@ -321,6 +324,7 @@ impl Default for RadarSettings {
             stale_retain_secs: 30.0,
             window_mode: WindowMode::Overlay,
             click_through: false,
+            hide_when_empty: false,
             update_hz: 20,
             data_source: DataSourceConfig::default(),
             coordinate_transform: CoordinateTransform::default(),

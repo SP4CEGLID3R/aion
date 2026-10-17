@@ -52,6 +52,9 @@ struct Inner {
     capture: Option<SharedStatus>,
     /// The minimap reader, when it runs.
     minimap: Option<MinimapService>,
+    /// The radar shows nothing right now ("only when a cube is on it"), so
+    /// it lets clicks through whatever the click-through setting says.
+    radar_hidden: bool,
 }
 
 struct AppState {
@@ -406,19 +409,25 @@ fn sync_guide_window(app: &AppHandle, s: &RadarSettings) {
     }
 }
 
-fn apply_window_mode(window: &WebviewWindow, s: &RadarSettings) {
+fn apply_window_mode(window: &WebviewWindow, s: &RadarSettings, hidden: bool) {
     let overlay = s.window_mode == WindowMode::Overlay;
     let results = [
         window.set_decorations(!overlay),
         window.set_always_on_top(overlay),
         window.set_shadow(!overlay),
-        window.set_ignore_cursor_events(overlay && s.click_through),
+        window.set_ignore_cursor_events(lets_clicks_through(s, hidden)),
     ];
     for r in results {
         if let Err(e) = r {
             log::warn!("window mode change failed: {e}");
         }
     }
+}
+
+/// Clicks go to the game below: the setting, or an overlay that shows
+/// nothing right now.
+fn lets_clicks_through(s: &RadarSettings, hidden: bool) -> bool {
+    s.window_mode == WindowMode::Overlay && (s.click_through || hidden)
 }
 
 fn create_radar_window(app: &AppHandle, s: &RadarSettings) -> tauri::Result<WebviewWindow> {
@@ -438,7 +447,7 @@ fn create_radar_window(app: &AppHandle, s: &RadarSettings) -> tauri::Result<Webv
         .focused(false)
         .content_protected(wants_minimap(s))
         .build()?;
-    apply_window_mode(&window, s);
+    apply_window_mode(&window, s, false);
     Ok(window)
 }
 
@@ -506,7 +515,8 @@ fn apply_settings(app: &AppHandle, state: &AppState, settings: RadarSettings) ->
         warnings.push(format!("settings applied but not saved: {e}"));
     }
     if let Some(w) = app.get_webview_window(RADAR) {
-        apply_window_mode(&w, &settings);
+        let hidden = state.lock().radar_hidden;
+        apply_window_mode(&w, &settings, hidden);
     }
     apply_protection(app, &settings);
     sync_guide_window(app, &settings);
@@ -515,6 +525,41 @@ fn apply_settings(app: &AppHandle, state: &AppState, settings: RadarSettings) ->
         log::warn!("settings: {w}");
     }
     SettingsUpdate { settings, warnings }
+}
+
+/// The radar window shows nothing ("only when a cube is on it" with no cube)
+/// or shows again: clicks pass through while it is invisible.
+#[tauri::command]
+fn set_radar_hidden(app: AppHandle, state: State<'_, AppState>, hidden: bool) {
+    let settings = {
+        let mut inner = state.lock();
+        inner.radar_hidden = hidden;
+        inner.settings.clone()
+    };
+    log::info!(
+        "radar {}",
+        if hidden {
+            "hidden (no cube on it)"
+        } else {
+            "shown"
+        }
+    );
+    if let Some(w) = app.get_webview_window(RADAR) {
+        if let Err(e) = w.set_ignore_cursor_events(lets_clicks_through(&settings, hidden)) {
+            log::warn!("radar click-through: {e}");
+        }
+    }
+}
+
+/// Ctrl+Tab: "show the radar only when a cube is on it" on or off.
+fn toggle_hide_when_empty(app: &AppHandle) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let mut settings = state.lock().settings.clone();
+    settings.hide_when_empty = !settings.hide_when_empty;
+    log::info!("radar only with cubes: {}", settings.hide_when_empty);
+    apply_settings(app, &state, settings);
 }
 
 #[tauri::command]
@@ -748,6 +793,11 @@ fn settings_shortcut() -> Shortcut {
     Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyS)
 }
 
+/// Ctrl+Tab switches "show the radar only when a cube is on it". Global.
+fn hide_when_empty_shortcut() -> Shortcut {
+    Shortcut::new(Some(Modifiers::CONTROL), Code::Tab)
+}
+
 /// Ctrl+Alt+V: a cube appeared. Ctrl+Alt+C: a cube was collected. Global, so
 /// they work while the game has focus.
 fn marker_shortcuts() -> [(Shortcut, &'static str); 2] {
@@ -764,6 +814,10 @@ pub fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    if *shortcut == hide_when_empty_shortcut() {
+                        toggle_hide_when_empty(app);
                         return;
                     }
                     if *shortcut == settings_shortcut() {
@@ -832,12 +886,16 @@ pub fn run() {
                     engine: started.engine,
                     capture: started.capture,
                     minimap: started.minimap,
+                    radar_hidden: false,
                 }),
                 store,
                 paths,
             });
             if let Err(e) = app.global_shortcut().register(settings_shortcut()) {
                 log::warn!("could not register the settings hotkey (Ctrl+Alt+S): {e}");
+            }
+            if let Err(e) = app.global_shortcut().register(hide_when_empty_shortcut()) {
+                log::warn!("could not register the Ctrl+Tab hotkey: {e}");
             }
             for (shortcut, kind) in marker_shortcuts() {
                 // Another program may own the key; markers still work from the settings window.
@@ -890,7 +948,8 @@ pub fn run() {
             list_monitors,
             default_minimap_region,
             screenshot_monitor,
-            create_desktop_shortcut
+            create_desktop_shortcut,
+            set_radar_hidden
         ])
         .run(tauri::generate_context!())
         .expect("error while running the radar");
@@ -900,6 +959,38 @@ pub fn run() {
 mod tests {
     use super::*;
     use radar_core::{DataSourceConfig, StaleDisplay};
+
+    #[test]
+    fn clicks_pass_through_an_invisible_overlay_only() {
+        let s = RadarSettings::default();
+        assert!(!lets_clicks_through(&s, false));
+        assert!(lets_clicks_through(&s, true));
+        let through = RadarSettings {
+            click_through: true,
+            ..s.clone()
+        };
+        assert!(lets_clicks_through(&through, false));
+        // A normal window always takes clicks.
+        let separate = RadarSettings {
+            window_mode: WindowMode::Separate,
+            click_through: true,
+            ..s
+        };
+        assert!(!lets_clicks_through(&separate, true));
+    }
+
+    #[test]
+    fn showing_only_with_cubes_does_not_restart_the_source() {
+        let old = RadarSettings::default();
+        let new = RadarSettings {
+            hide_when_empty: true,
+            ..old.clone()
+        };
+        assert!(!needs_restart(&old, &new));
+        // Older settings files without the option keep the radar shown.
+        let parsed: RadarSettings = serde_json::from_str(r#"{"range": 120}"#).unwrap();
+        assert!(!parsed.hide_when_empty);
+    }
 
     #[test]
     fn display_only_changes_do_not_restart_the_source() {

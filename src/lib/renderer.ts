@@ -29,15 +29,13 @@ export interface Scene {
 
 const FONT = "600 11px system-ui, 'Segoe UI', sans-serif";
 
-export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, width: number, height: number): void {
+/** Draws the radar; returns how many cube markers (and rim arrows) it drew. */
+export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, width: number, height: number): number {
   const { settings, view } = scene;
   const c = settings.colors;
   ctx.clearRect(0, 0, width, height);
 
-  if (settings.style === "minimap") {
-    drawMinimapScene(ctx, scene, width);
-    return;
-  }
+  if (settings.style === "minimap") return drawMinimapScene(ctx, scene, width);
 
   // Like a minimap: the map (the game's own, when it is read, else a
   // world-fixed grid), you in the middle, the cubes. Nothing else.
@@ -68,6 +66,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
     // A second arrow on top of the game's own would only blur into it.
     if (!gameMap) drawPlayer(ctx, scene);
   }
+  return markers.length;
 }
 
 /** The game's own minimap behind everything, at the radar's scale. */
@@ -90,7 +89,7 @@ function drawBackground(ctx: CanvasRenderingContext2D, scene: Scene, bg: Minimap
 }
 
 /** Markers only, on a clear background, for laying over the game's minimap. */
-function drawMinimapScene(ctx: CanvasRenderingContext2D, scene: Scene, width: number): void {
+function drawMinimapScene(ctx: CanvasRenderingContext2D, scene: Scene, width: number): number {
   const { settings, view } = scene;
   // A faint outline so the window can be lined up with the minimap.
   ctx.beginPath();
@@ -101,6 +100,7 @@ function drawMinimapScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
   const markers = layoutMarkers(scene.cubes, scene.player, view, settings);
   for (const m of markers) drawMarker(ctx, m, settings, width);
   if (scene.player) drawAccuracy(ctx, scene);
+  return markers.length;
 }
 
 /** World-fixed grid lines, clipped to the disc: they slide as you move. */

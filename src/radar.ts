@@ -6,6 +6,7 @@ import { backend } from "./lib/bridge";
 import { beepPitch, isHere, nearestLive, ProximityBeeper } from "./lib/guide";
 import { lerp, lerpAngleDeg, viewUpDeg, type View } from "./lib/projection";
 import { drawScene, type MinimapBackground } from "./lib/renderer";
+import { AutoHide } from "./lib/autoHide";
 import { AlertGate, playAlert, playArrived, playBeep } from "./lib/sound";
 import { DEFAULT_SETTINGS, type RadarFrame, type RadarSettings, type WorldPos } from "./lib/types";
 
@@ -25,6 +26,9 @@ let cur: { frame: RadarFrame; at: number } | null = null;
 let size = { w: 0, h: 0, dpr: 1 };
 const alertGate = new AlertGate();
 const beeper = new ProximityBeeper();
+const autoHide = new AutoHide();
+/** What the window was last told: shown, or invisible and click-through. */
+let radarShown = true;
 
 // The live game minimap, drawn behind the radar.
 let background: MinimapBackground | null = null;
@@ -111,8 +115,17 @@ function maybeBeep(frame: RadarFrame | null, backendSilent: boolean, now: number
   }
 }
 
+let settingsLoaded = false;
+
 function applySettings(s: RadarSettings): void {
+  const switched = settingsLoaded && s.hideWhenEmpty !== settings.hideWhenEmpty;
   settings = s;
+  settingsLoaded = true;
+  if (switched && s.windowMode === "overlay") {
+    // Shown for a moment either way, so the switch (Ctrl+Tab) is seen.
+    autoHide.reveal(performance.now(), 2000);
+    showToast(s.hideWhenEmpty ? "Radar shows only when a cube is on it" : "Radar always shown", 2000);
+  }
   root.style.opacity = String(s.opacity);
   legend.hidden = !s.showLegend;
   legendStale.hidden = s.staleDisplay !== "mark_stale";
@@ -165,7 +178,7 @@ function render(): void {
   };
 
   ctx.setTransform(size.dpr, 0, 0, size.dpr, 0, 0);
-  drawScene(
+  const cubesDrawn = drawScene(
     ctx,
     {
       settings,
@@ -183,7 +196,31 @@ function render(): void {
 
   setBanner(bannerText(frame, backendSilent));
   if (!backend.isPreview) maybeBeep(frame, backendSilent, now);
+  showRadar(autoHide.visible(autoHideOn(), cubesDrawn, now));
   requestAnimationFrame(render);
+}
+
+/** "Show the radar only when a cube is on it" applies to the overlay. */
+function autoHideOn(): boolean {
+  return settings.hideWhenEmpty && settings.windowMode === "overlay" && !backend.isPreview;
+}
+
+/** Invisible windows keep drawing (sounds and beeps go on) but let clicks
+ * through, so the game under them can be clicked. */
+function showRadar(shown: boolean): void {
+  if (shown === radarShown) return;
+  radarShown = shown;
+  document.body.classList.toggle("auto-hidden", !shown);
+  backend.setRadarHidden(!shown).catch((e) => console.error("radar visibility", e));
+}
+
+let toastTimer = 0;
+function showToast(message: string, ms = 1500): void {
+  const toast = document.querySelector<HTMLElement>("#toast")!;
+  toast.textContent = message;
+  toast.hidden = false;
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => (toast.hidden = true), ms);
 }
 
 function bannerText(frame: RadarFrame | null, backendSilent: boolean): string | null {
@@ -238,6 +275,12 @@ async function main(): Promise<void> {
   } catch (e) {
     console.error("could not load settings", e);
   }
+  if (autoHideOn()) {
+    // Seen once at start, so an empty radar does not look like a radar that
+    // did not start.
+    autoHide.reveal(performance.now(), 3000);
+    showToast("Radar shows only when a cube is on it (Ctrl+Tab)", 3000);
+  }
   await backend.onSettings(applySettings);
   await backend.onFrame((frame) => {
     prev = cur;
@@ -247,14 +290,7 @@ async function main(): Promise<void> {
     maybeAlert(frame, cur.at);
   });
 
-  let toastTimer = 0;
-  await backend.onMarker((message) => {
-    const toast = document.querySelector<HTMLElement>("#toast")!;
-    toast.textContent = message;
-    toast.hidden = false;
-    window.clearTimeout(toastTimer);
-    toastTimer = window.setTimeout(() => (toast.hidden = true), 1500);
-  });
+  await backend.onMarker((message) => showToast(message));
 
   document.querySelector("#btn-settings")!.addEventListener("click", () => {
     backend.openSettingsWindow().catch((e) => console.error(e));
