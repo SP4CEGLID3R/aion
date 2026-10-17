@@ -21,8 +21,8 @@ use std::time::Instant;
 use crate::locate::PivotFinder;
 use crate::ncc::{Correlator, Spectra};
 use crate::overlay::{
-    cone_angle, cyan, icon_mask, overlay_mask, ring_radius, ring_radius_between, CONE_CLEAR,
-    CONE_EDGE_DEG, DISK_R, EDGE, RING_HALF_W,
+    cone_angle, cyan, icon_mask, overlay_mask, ring_radius_between, CONE_CLEAR, CONE_EDGE_DEG,
+    DISK_R, EDGE, RING_HALF_W,
 };
 use crate::plane::{Bgra, Mask, Plane};
 
@@ -181,6 +181,8 @@ pub struct MinimapTracker {
     ring_sure: bool,
     /// A different size seen while the known one is gone: (radius, times).
     ring_cand: Option<(f64, u32)>,
+    /// How much the confirmed ring stood out (cyan above its surroundings).
+    ring_strength: f64,
     n: u64,
     seg: i64,
     /// Segment numbers are never reused (a resumed one keeps its own).
@@ -247,6 +249,7 @@ impl MinimapTracker {
             ring_planes: VecDeque::new(),
             ring_sure: false,
             ring_cand: None,
+            ring_strength: 0.0,
             n: 0,
             seg: -1,
             next_seg: 0,
@@ -319,31 +322,40 @@ impl MinimapTracker {
     /// a new size, confirmed).
     fn measure_ring(&mut self, planes: &[Plane]) -> Option<f64> {
         let r_min = DISK_R * self.scale + 6.0;
-        let anywhere = ring_radius(planes, self.pivot, r_min);
+        let first = planes.first()?;
+        let found =
+            ring_radius_between(planes, self.pivot, r_min, 0.5 * first.w.min(first.h) as f64);
+        let anywhere = found.map(|(r, _)| r);
         let Some(old) = self.ring_r else {
             return anywhere;
         };
         if !self.ring_sure {
             // Not sure of the first reading yet: a second agreeing one makes
             // it sure; a different one replaces it.
-            if anywhere.is_some_and(|r| (r - old).abs() <= 2.0) {
+            if let Some((r, strength)) = found.filter(|(r, _)| (r - old).abs() <= 2.0) {
                 self.ring_sure = true;
+                self.ring_strength = strength;
+                return Some(r);
             }
             return anywhere;
         }
+        // Near the known size, and standing out about as much as the ring
+        // did (a faint cyan bump there is not the ring).
         let near = ring_radius_between(
             planes,
             self.pivot,
             (old * (1.0 - RING_NEAR)).max(r_min),
             old * (1.0 + RING_NEAR),
-        );
-        if near.is_some() {
+        )
+        .filter(|(_, strength)| *strength >= 0.5 * self.ring_strength);
+        if let Some((r, strength)) = near {
             self.ring_cand = None;
-            return near;
+            self.ring_strength += 0.2 * (strength - self.ring_strength);
+            return Some(r);
         }
         // The known ring is gone (a zoom change?): a new size only once it
         // has been read the same RING_CONFIRM times in a row.
-        let r = anywhere?;
+        let (r, strength) = found?;
         let times = match self.ring_cand {
             Some((c, n)) if (c - r).abs() <= 2.0 => n + 1,
             _ => 1,
@@ -351,6 +363,7 @@ impl MinimapTracker {
         self.ring_cand = Some((r, times));
         (times >= RING_CONFIRM).then(|| {
             self.ring_cand = None;
+            self.ring_strength = strength;
             r
         })
     }

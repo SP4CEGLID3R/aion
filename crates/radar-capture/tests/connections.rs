@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use radar_capture::net::{build_ipv4_tcp, linktype, tcp_flags};
 use radar_capture::pcapfile::Record;
 use radar_capture::source::process_records;
-use radar_capture::synthetic::aion2_layout::{heartbeat, self_buff, self_info, spawn};
+use radar_capture::synthetic::aion2_layout::{heartbeat, map_load, self_buff, self_info, spawn};
 use radar_capture::{Aion2Config, DecoderChoice};
 use radar_core::{CoordinateTransform, CubeState, StaleDisplay, Tracker, TrackerConfig};
 use radar_ingest::{EventAdapter, WireEvent};
@@ -213,7 +213,8 @@ fn a_copy_of_the_map_data_on_a_local_connection_changes_nothing() {
 #[test]
 fn a_teleport_to_a_new_connection_is_followed() {
     // The map connection ends at 30 s; after a 3 s loading screen the new
-    // map's connection says who we are, where we are, and shows cube B.
+    // map's connection loads the map (with our position), says who we are,
+    // and shows cube B.
     // The other server keeps its connection throughout.
     let mut old = Flow::new("66.206.3.146:39713", "192.168.0.164:58149", T0);
     map_stream(&mut old, 30_000.0);
@@ -222,6 +223,9 @@ fn a_teleport_to_a_new_connection_is_followed() {
     let mut new = Flow::new("66.206.3.150:41000", "192.168.0.164:58160", T0 + 33_000.0);
     stream(&mut new, 33_000.0, 60_000.0, |rel| {
         let mut b = Vec::new();
+        if rel == 33_100.0 {
+            b.extend(map_load(2, THERE));
+        }
         if rel == 33_500.0 {
             b.extend(self_info());
         }
@@ -250,4 +254,73 @@ fn a_teleport_to_a_new_connection_is_followed() {
         (p[0] - 300.0).abs() < 1.0 && (p[1] - 800.0).abs() < 1.0,
         "{p:?}"
     );
+}
+
+#[test]
+fn back_to_a_connection_that_stayed_open() {
+    // A dungeon: its connection (newer) loads the map at 20 s and the first
+    // one goes quiet; at 40 s the first one, still open, loads the map
+    // again (back outside). Both switches happen at once.
+    let mut field = Flow::new("66.206.3.146:39713", "192.168.0.164:58149", T0);
+    stream(&mut field, 0.0, 60_000.0, |rel| {
+        let mut b = Vec::new();
+        if rel < 19_000.0 && (rel as u64).is_multiple_of(5_000) {
+            b.extend(self_buff(ME));
+        }
+        if rel == 5_000.0 {
+            b.extend(spawn(65_509, 1_200_039, CUBE_A));
+        }
+        if rel == 40_000.0 {
+            b.extend(map_load(1, ME));
+        }
+        b
+    });
+    let mut dungeon = Flow::new("66.206.3.150:41000", "192.168.0.164:58160", T0 + 19_500.0);
+    stream(&mut dungeon, 19_500.0, 39_000.0, |rel| {
+        let mut b = Vec::new();
+        if rel == 20_000.0 {
+            b.extend(map_load(7, THERE));
+        }
+        if rel == 22_000.0 {
+            b.extend(spawn(70_001, 1_200_039, CUBE_B));
+        }
+        b
+    });
+    let r = run(&merge(vec![field, dungeon]));
+    let zones = r.zone_changes();
+    assert!(
+        zones.iter().any(|z| (20_000.0..20_200.0).contains(z)),
+        "{zones:?}"
+    );
+    assert!(
+        zones.iter().any(|z| (40_000.0..40_200.0).contains(z)),
+        "{zones:?}"
+    );
+    assert_eq!(r.live_at(30_000.0), vec!["70001"]);
+    assert!(r.live_at(45_000.0).is_empty());
+    // Our position: in the dungeon at 20 s, outside again at 40 s.
+    let (_, p) = r.players(20_000.0, 20_500.0)[0];
+    assert!((p[0] - 300.0).abs() < 1.0, "{p:?}");
+    let (_, p) = r.players(40_000.0, 40_500.0)[0];
+    assert!((p[0] + 450.0).abs() < 1.0, "{p:?}");
+}
+
+#[test]
+fn a_stray_message_on_a_local_connection_does_not_steal_the_radar() {
+    // The local service sends, now and then, a message with the type of an
+    // object spawn that does not decode as one.
+    let mut game = Flow::new("66.206.3.146:39713", "192.168.0.164:58149", T0);
+    map_stream(&mut game, 40_000.0);
+    let mut local = Flow::new("127.0.0.1:55643", "127.0.0.1:58148", T0);
+    stream(&mut local, 0.0, 40_000.0, |rel| {
+        if (rel as u64).is_multiple_of(2_000) {
+            radar_capture::framing::encode_frame([0x34, 0x36], &[1, 2, 3])
+        } else {
+            Vec::new()
+        }
+    });
+    let r = run(&merge(vec![local, game]));
+    assert_eq!(r.zone_changes().len(), 1, "{:?}", r.zone_changes());
+    assert_eq!(r.live_at(39_000.0), vec!["65509"]);
+    assert!(!r.players(35_000.0, 36_000.0).is_empty());
 }

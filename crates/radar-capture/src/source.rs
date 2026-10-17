@@ -311,14 +311,19 @@ impl Pipeline {
                     self.frames += 1;
                     self.census.observe(&frame, t_ms);
                     match &mut self.decoder {
-                        Decoding::Aion2(d) => out.extend(follow_frame(
-                            &mut self.follow,
-                            d,
-                            conn,
-                            frame.clone(),
-                            t_ms,
-                            t_out,
-                        )),
+                        Decoding::Aion2(d) => {
+                            out.extend(follow_frame(
+                                &mut self.follow,
+                                d,
+                                conn,
+                                frame.clone(),
+                                t_ms,
+                                t_out,
+                            ));
+                            if self.follow.current() == Some(conn) {
+                                self.streams.set_followed(conn);
+                            }
+                        }
                         Decoding::Profile(d) => out.extend(d.decode(&frame, t_out)),
                         Decoding::None => {}
                     }
@@ -628,8 +633,10 @@ fn follow_frame(
     let kind = d.frame_kind(&frame);
     let routed = follow.route(conn, kind, frame, t_ms, t);
     let mut out = Vec::new();
-    if routed.switched {
+    if routed.switched && routed.previous.is_some() {
         d.on_new_connection();
+    }
+    if routed.switched {
         out.push(WireEvent::ZoneChanged {
             t,
             zone: format!("connection-{conn}"),
@@ -696,14 +703,19 @@ pub fn process_records(
                 StreamEvent::Frame { conn, t_ms, frame } => {
                     census.observe(&frame, t_ms);
                     match &mut decoder {
-                        Decoding::Aion2(d) => events.extend(follow_frame(
-                            &mut follow,
-                            d,
-                            conn,
-                            frame.clone(),
-                            t_ms,
-                            t,
-                        )),
+                        Decoding::Aion2(d) => {
+                            events.extend(follow_frame(
+                                &mut follow,
+                                d,
+                                conn,
+                                frame.clone(),
+                                t_ms,
+                                t,
+                            ));
+                            if follow.current() == Some(conn) {
+                                streams.set_followed(conn);
+                            }
+                        }
                         Decoding::Profile(d) => events.extend(d.decode(&frame, t)),
                         Decoding::None => {}
                     }

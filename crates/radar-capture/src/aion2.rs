@@ -596,24 +596,30 @@ impl Aion2Decoder {
     }
 
     /// A new game connection: entity ids start over.
-    /// What the frame is for following a connection: map data (positions,
-    /// objects, map loads), which only the current map's connection sends;
-    /// who we are (by entity id); or anything else.
+    /// What the frame is for following a connection (see `follow.rs`).
+    /// Map data counts only if it decodes (a world position, an object), so
+    /// another service's message with the same type does not.
     pub fn frame_kind(&self, frame: &Frame) -> crate::follow::Kind {
         use crate::follow::Kind;
         let o = &self.ops;
         let op = frame.opcode;
-        let map = [
-            o.map_load,
-            o.teleport,
-            o.object_spawn,
-            o.object_removed,
-            o.pos_buff_a,
-            o.pos_buff_b,
-            o.pos_cast,
-            o.pos_target,
-        ];
-        if map.contains(&op) {
+        let Some(body) = frame.payload.get(2..) else {
+            return Kind::Other;
+        };
+        let world = |p: Option<[f32; 3]>| p.is_some_and(is_world_position);
+        let fix = |kind| parse_position(kind, body).is_some_and(|(_, p)| is_world_position(p));
+        if (op == o.map_load && world(xyz_at(body, 16)))
+            || (op == o.teleport && world(xyz_at(body, 6)))
+        {
+            Kind::Arrival
+        } else if (op == o.object_spawn
+            && parse_spawn(body).is_some_and(|s| is_world_position(s.pos)))
+            || (op == o.object_removed && parse_removed(body).is_some())
+            || (op == o.pos_buff_a && fix(FixKind::BuffA))
+            || (op == o.pos_buff_b && fix(FixKind::BuffB))
+            || (op == o.pos_cast && fix(FixKind::Cast))
+            || (op == o.pos_target && fix(FixKind::Target))
+        {
             Kind::Map
         } else if op == o.self_info || o.self_id_ops.contains(&op) {
             Kind::Identity

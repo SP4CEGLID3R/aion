@@ -219,16 +219,17 @@ pub fn cyan(frame: &Bgra) -> Plane {
 /// (per-pixel median), or `None` when no ring stands out.
 pub fn ring_radius(planes: &[Plane], pivot: (f64, f64), r_min: f64) -> Option<f64> {
     let first = planes.first()?;
-    ring_radius_between(planes, pivot, r_min, 0.5 * first.w.min(first.h) as f64)
+    ring_radius_between(planes, pivot, r_min, 0.5 * first.w.min(first.h) as f64).map(|(r, _)| r)
 }
 
-/// [`ring_radius`] looking only between `r_min` and `r_max`.
+/// [`ring_radius`] looking only between `r_min` and `r_max`; also how much
+/// the ring stands out (cyan above the band's median).
 pub fn ring_radius_between(
     planes: &[Plane],
     pivot: (f64, f64),
     r_min: f64,
     r_max: f64,
-) -> Option<f64> {
+) -> Option<(f64, f64)> {
     let first = planes.first()?;
     let (w, h) = (first.w, first.h);
     let mut med = Plane::new(w, h);
@@ -261,7 +262,7 @@ pub fn ring_radius_between(
     let mut sorted: Vec<f64> = prof.iter().map(|p| p.1).collect();
     sorted.sort_by(f64::total_cmp);
     let base = sorted[sorted.len() / 2];
-    (best_v - base >= 8.0).then_some(best_r)
+    (best_v - base >= 8.0).then_some((best_r, best_v - base))
 }
 
 #[cfg(test)]

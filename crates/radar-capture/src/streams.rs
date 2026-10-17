@@ -29,8 +29,6 @@ pub enum StreamEvent {
     GameStream {
         conn: u64,
         flow: String,
-        /// The previous game connection this one replaces (a zone change).
-        replaced: Option<u64>,
     },
     Frame {
         conn: u64,
@@ -67,17 +65,6 @@ pub enum FlowKind {
 struct FlowKey {
     src: SocketAddr,
     dst: SocketAddr,
-}
-
-impl FlowKey {
-    /// Both directions of a connection share this.
-    fn connection(&self) -> (SocketAddr, SocketAddr) {
-        if self.src <= self.dst {
-            (self.src, self.dst)
-        } else {
-            (self.dst, self.src)
-        }
-    }
 }
 
 enum State {
@@ -123,7 +110,8 @@ pub struct StreamStats {
 pub struct GameStreams {
     flows: HashMap<FlowKey, Flow>,
     next_conn: u64,
-    current: Option<(u64, (SocketAddr, SocketAddr))>,
+    /// Names of recognised game connections, for the status.
+    names: HashMap<u64, String>,
     stats: StreamStats,
     /// Framing stats of streams that have ended.
     retired: FramingStats,
@@ -145,6 +133,11 @@ impl GameStreams {
         }
         s.framing = f;
         s
+    }
+
+    /// The connection the decoder follows, shown as the current stream.
+    pub fn set_followed(&mut self, conn: u64) {
+        self.stats.current_stream = self.names.get(&conn).cloned();
     }
 
     pub fn kind(&self, src: SocketAddr, dst: SocketAddr) -> FlowKind {
@@ -317,24 +310,9 @@ impl GameStreams {
             flow.state = State::Game { conn, framer };
             self.stats.game_streams += 1;
 
-            let pair = key.connection();
-            let replaced = match self.current {
-                Some((old, old_pair)) if old_pair != pair => Some(old),
-                _ => None,
-            };
-            if self.current.is_none_or(|(_, p)| p != pair) {
-                self.current = Some((conn, pair));
-            }
             let name = format!("{} → {}", key.src, key.dst);
-            self.stats.current_stream = Some(name.clone());
-            out.insert(
-                0,
-                StreamEvent::GameStream {
-                    conn,
-                    flow: name,
-                    replaced,
-                },
-            );
+            self.names.insert(conn, name.clone());
+            out.insert(0, StreamEvent::GameStream { conn, flow: name });
             out.extend(
                 frames
                     .into_iter()
@@ -472,14 +450,7 @@ mod tests {
         seq += h.len() as u32;
         assert!(frames(&all).is_empty(), "one heartbeat is not enough");
         all.extend(g.push(&seg(s, c, seq, 0, &h), 70.0));
-        assert!(matches!(
-            all[0],
-            StreamEvent::GameStream {
-                conn: 1,
-                replaced: None,
-                ..
-            }
-        ));
+        assert!(matches!(all[0], StreamEvent::GameStream { conn: 1, .. }));
         assert_eq!(frames(&all), vec!["33 36", "00 36", "00 36"]);
     }
 
@@ -512,33 +483,19 @@ mod tests {
     }
 
     #[test]
-    fn a_new_game_connection_is_a_zone_change() {
+    fn each_game_connection_gets_its_own_id() {
         let mut g = GameStreams::new();
         let two = [hb(), hb()].concat();
         let first = g.push(
             &seg("203.0.113.5:13328", "192.168.1.2:50000", 100, 0, &two),
             0.0,
         );
-        assert!(matches!(
-            first[0],
-            StreamEvent::GameStream {
-                conn: 1,
-                replaced: None,
-                ..
-            }
-        ));
+        assert!(matches!(first[0], StreamEvent::GameStream { conn: 1, .. }));
         let second = g.push(
             &seg("203.0.113.9:13328", "192.168.1.2:50001", 500, 0, &two),
             5_000.0,
         );
-        assert!(matches!(
-            second[0],
-            StreamEvent::GameStream {
-                conn: 2,
-                replaced: Some(1),
-                ..
-            }
-        ));
+        assert!(matches!(second[0], StreamEvent::GameStream { conn: 2, .. }));
     }
 
     #[test]
