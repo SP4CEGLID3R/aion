@@ -510,3 +510,31 @@ fn the_big_map_over_the_minimap_is_told_apart_from_the_minimap() {
         "of {covered} covered frames, {missed} passed as the minimap"
     );
 }
+
+#[test]
+fn a_darker_arrow_disk_is_taken_on_while_walking() {
+    // The disk's look changes (a darker place) at 10 s; walking on, the
+    // minimap must count as the minimap again within ~2 s, and stay so.
+    let (w, h) = (311, 206);
+    let map = SynthMap::new(1600, 1300, 7);
+    let mut tr = MinimapTracker::new(w, h, TrackerConfig::default());
+    let mut refused_after = Vec::new();
+    for i in 0..300i64 {
+        let t = 1_790_000_000_000 + i * 100;
+        let (x, y) = path(i * 100);
+        let ov = Overlay {
+            disk_dim: if i >= 100 { 60.0 } else { 0.0 },
+            ..Overlay::default()
+        };
+        let px = frame(&map, x, y, w, h, &ov);
+        let st = tr.step(t, &Bgra::packed(w, h, &px).unwrap());
+        if !st.disk_ok {
+            refused_after.push(i - 100);
+        }
+    }
+    eprintln!("refused frames (relative to the change): {refused_after:?}");
+    assert!(
+        refused_after.iter().all(|&d| (0..25).contains(&d)),
+        "refused {refused_after:?}"
+    );
+}

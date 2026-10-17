@@ -61,6 +61,8 @@ const PIVOT_SLACK: f64 = 14.0;
 /// plain), and its brightness within this of what was learned.
 const DISK_SPREAD: f64 = 22.0;
 const DISK_DRIFT: f64 = 35.0;
+/// Movement within a second that counts as the map scrolling (px at UI scale 1).
+const DISK_SCROLL_PX: f64 = 2.0;
 const RESUME_WITHIN_MS: Millis = 120_000;
 const RESUME_TRY_MS: Millis = 10_000;
 const RESUME_HEALTHY: u64 = 10;
@@ -177,6 +179,8 @@ pub struct MinimapTracker {
     /// frames that tracked well.
     disk_ref: Option<f64>,
     disk_now: Option<(f64, f64)>,
+    /// Recent good positions (t, x, y, segment), to tell a scrolling map.
+    disk_track: VecDeque<(Millis, f64, f64, i64)>,
     cor: Correlator,
     key_px: f64,
     ring_r: Option<f64>,
@@ -263,6 +267,7 @@ impl MinimapTracker {
             stats: TrackerStats::default(),
             disk_ref: None,
             disk_now: None,
+            disk_track: VecDeque::new(),
             finder: cfg.locate_pivot.then(|| PivotFinder::new(w, h, ds, scale)),
             cfg,
         }
@@ -306,17 +311,40 @@ impl MinimapTracker {
 
     /// Whether this frame's arrow disk looks like the minimap's; learns its
     /// look from frames that `learn` (tracked well).
-    fn check_disk(&mut self, learn: bool) -> bool {
+    /// Also re-learns a changed look while the map scrolls (`scrolling`): the
+    /// minimap scrolls as you walk, the big map or a dialog over it does not,
+    /// so darker places or other lighting are taken on within a second or so.
+    fn check_disk(&mut self, learn: bool, scrolling: bool) -> bool {
         let Some((mean, sd)) = self.disk_now else {
             return true; // black or odd-sized frames are flagged otherwise
         };
         let ok = self
             .disk_ref
             .is_none_or(|r| sd <= DISK_SPREAD && (mean - r).abs() <= DISK_DRIFT);
-        if learn && sd <= DISK_SPREAD && ok {
+        if learn && sd <= DISK_SPREAD && (ok || scrolling) {
             self.disk_ref = Some(self.disk_ref.map_or(mean, |r| r + 0.05 * (mean - r)));
         }
         ok
+    }
+
+    /// The map moved by at least DISK_SCROLL_PX within the last second of
+    /// good frames of this segment.
+    fn scrolling(&mut self, s: &Step) -> bool {
+        if !s.good || s.x.is_nan() {
+            return false;
+        }
+        while self
+            .disk_track
+            .front()
+            .is_some_and(|p| s.t - p.0 > 1_500 || p.3 != s.seg)
+        {
+            self.disk_track.pop_front();
+        }
+        let moved = self.disk_track.iter().any(|p| {
+            s.t - p.0 >= 800 && (s.x - p.1).hypot(s.y - p.2) >= DISK_SCROLL_PX * self.scale
+        });
+        self.disk_track.push_back((s.t, s.x, s.y, s.seg));
+        moved
     }
 
     /// Mean and spread of the grey ring inside the arrow's light disk
@@ -507,7 +535,8 @@ impl MinimapTracker {
         let started = Instant::now();
         self.disk_now = None;
         let mut out = self.step_inner(t, frame);
-        out.disk_ok = self.check_disk(out.good && !out.recentred);
+        let scrolling = self.scrolling(&out);
+        out.disk_ok = self.check_disk(out.good && !out.recentred, scrolling);
         self.stats.last_ms = started.elapsed().as_secs_f64() * 1000.0;
         // Frozen capture: identical pixels for a while.
         let print = frame.fingerprint();

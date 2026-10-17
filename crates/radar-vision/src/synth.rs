@@ -150,6 +150,8 @@ pub struct Overlay {
     /// Where the player arrow is in the frame; `None` = the centre (a
     /// rectangle that is not exactly centred on the arrow has it elsewhere).
     pub pivot: Option<(f64, f64)>,
+    /// Darkens the arrow's light disk by this many grey levels (lighting).
+    pub disk_dim: f64,
 }
 
 impl Default for Overlay {
@@ -161,6 +163,7 @@ impl Default for Overlay {
             dots: Vec::new(),
             ui_scale: 1.0,
             pivot: None,
+            disk_dim: 0.0,
         }
     }
 }
@@ -196,7 +199,7 @@ pub fn frame(map: &SynthMap, cx: f64, cy: f64, w: usize, h: usize, ov: &Overlay)
             }
             if r <= 24.0 * s {
                 // Light disk with a dark arrow pointing at `facing`.
-                c = [235.0, 228.0, 205.0];
+                c = [235.0, 228.0, 205.0].map(|v| v - ov.disk_dim);
                 let rel = crate::overlay::circ_diff(ang, ov.facing);
                 let along = r * rel.to_radians().cos();
                 let across = (r * rel.to_radians().sin()).abs();

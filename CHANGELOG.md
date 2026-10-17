@@ -58,6 +58,12 @@ how far it is and whether it is up or down.
 
 ### Fixed
 
+- The minimap picture in the radar could be missing for long stretches
+  (e.g. when a cube appeared) after the zoom fix: it was drawn only while
+  the position was confirmed. It is now drawn whenever it is the minimap
+  (it is always centred on you), and a changed look of the arrow's disk
+  (darker places) is taken on within a second of walking.
+
 - The radar could suddenly show a hugely zoomed-in map: whatever was on
   screen at the minimap's spot (the big map, a dialog, a loading screen) or
   a minimap at a new zoom was drawn as if it were the minimap. The game's

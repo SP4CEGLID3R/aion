@@ -300,6 +300,7 @@ mod dev_synth {
                 // Not quite centred, like a minimap rectangle that is a few
                 // pixels off on a real screen.
                 pivot: Some((self.w as f64 / 2.0 + 7.0, self.h as f64 / 2.0 - 5.0)),
+                disk_dim: 0.0,
             };
             *out = frame(&self.map, cx, cy, self.w, self.h, &ov);
         }

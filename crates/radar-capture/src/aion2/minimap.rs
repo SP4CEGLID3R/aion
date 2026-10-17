@@ -742,8 +742,15 @@ impl MinimapFusion {
     }
 
     /// The latest minimap picture shows where we are at the known scale.
+    /// The minimap is always centred on the player, so the picture is right
+    /// to draw whenever it is current and at the known scale, however sure
+    /// the position itself is. Not while the range ring says the zoom changed.
     pub fn picture_ok(&self, t: Millis) -> bool {
-        self.ring_odd == 0 && self.locate(t).kind == LocKind::Live
+        self.ring_odd == 0
+            && !matches!(self.recal, Some(Recal::Ring(_)))
+            && !self.black
+            && !self.frozen
+            && self.last_frame_t.is_some_and(|f| t - f <= STALE_FRAME_MS)
     }
 
     pub fn px_per_m(&self) -> f64 {
@@ -876,6 +883,44 @@ mod tests {
                 ui_scale: 1.0,
             }
         }
+    }
+
+    #[test]
+    fn the_minimap_picture_is_drawn_without_a_sure_position_but_not_after_a_zoom_change() {
+        let world = World {
+            k: SEED_K,
+            m: AXIS_MAPS[0].1,
+            origin: (0.0, 0.0),
+        };
+        let mut f = MinimapFusion::new(UPM, None);
+        // No position report yet, and a broken track: the picture is still
+        // the minimap around the player.
+        for i in 0..30 {
+            let mut s = world.sample(i * 100);
+            s.ring_r = (i == 0).then_some(67.0);
+            s.brk = i == 15;
+            f.on_frame(&s);
+        }
+        assert_ne!(f.locate(2_900).kind, LocKind::Live);
+        assert!(f.picture_ok(2_900));
+        // The range ring changes size twice in a row: a zoom change, the
+        // picture waits for the new scale.
+        for (i, t) in [3_000, 3_100].into_iter().enumerate() {
+            let mut s = world.sample(t);
+            s.ring_r = Some(90.0 + i as f64 * 0.1);
+            f.on_frame(&s);
+        }
+        assert!(!f.picture_ok(3_100));
+        // A black capture or no frames for a while: nothing to draw.
+        let mut g = MinimapFusion::new(UPM, None);
+        let mut s = world.sample(0);
+        s.black = true;
+        g.on_frame(&s);
+        assert!(!g.picture_ok(0));
+        let mut h = MinimapFusion::new(UPM, None);
+        h.on_frame(&world.sample(0));
+        assert!(h.picture_ok(1_000));
+        assert!(!h.picture_ok(5_000));
     }
 
     fn run(world: &World, fix_every: Millis, secs: i64, f: &mut MinimapFusion) -> f64 {

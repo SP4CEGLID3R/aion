@@ -198,6 +198,7 @@ fn run(
     let period = Duration::from_millis(1000 / u64::from(fps.max(1)));
     let mut buf = Vec::new();
     let mut seq = 0u64;
+    let mut disk_ok = true;
     lock(&shared.status).running = true;
     log::info!(
         "minimap capture: {}×{} at ({}, {}), {fps}/s",
@@ -219,6 +220,16 @@ fn run(
             continue;
         };
         let step = tracker.step(t, &frame);
+        if step.disk_ok != disk_ok {
+            disk_ok = step.disk_ok;
+            if disk_ok {
+                log::info!("minimap picture: the minimap is back, drawn in the radar again");
+            } else {
+                log::info!(
+                    "minimap picture: something else is on the minimap's spot (big map, dialog?), not drawn"
+                );
+            }
+        }
         let pivot = tracker.pivot();
         if step.recentred {
             log::info!(
