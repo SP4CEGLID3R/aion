@@ -65,8 +65,13 @@ confirmed by a user in game.
   lost, confirmations stop and every cube becomes stale. Nothing is shown as
   live on a guess.
 * **Opened (04):** removed. **Left range (01):** stale (hidden by default).
-* **New connection / new map:** everything is cleared, because ids are per
-  connection.
+* **Several connections / new map:** the client keeps more than one
+  connection in this framing open (on a player's PC: two game servers and a
+  local service on 127.0.0.1). The radar follows the one that sends map
+  data (who we are, positions, objects) and ignores the others; a newer
+  connection that starts sending map data is the next map (a teleport):
+  everything is cleared then, because ids are per connection
+  (`crates/radar-capture/src/follow.rs`).
 * **Other zones:** when you open an object with the cube key, its template is
   learned for the rest of the session and later spawns of it are shown. The
   panel lists learned templates; add them to `aion2-decoder.json` to keep

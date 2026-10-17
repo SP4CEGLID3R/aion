@@ -60,10 +60,13 @@ NewAge-BD/Soulcrest; checked on their screenshots.
   under 1.5 px (25 px without this).
 * **Camera direction**: the two bright edges of the view cone, about 114°
   apart, found in the angular brightness profile around the arrow.
-* **Drawn only when it is the minimap**: the radar draws the game's minimap
-  behind itself only while the position follows it at the known scale and
-  the frame shows the arrow's light disk as learned on good frames (the big
-  map, dialogs and loading screens do not). Otherwise it shows its grid.
+* **Drawn in the radar**: the game's minimap is drawn behind the radar
+  whenever it is read (it is always centred on the player), also while the
+  radar waits for a position; not on black or frozen captures.
+* **Range ring**: its size is first taken when two readings agree; after
+  that it is looked for within ±15 % of that size, and a different size
+  counts only after three agreeing readings (cyan terrain such as a coast
+  can otherwise outshine the ring; a real zoom change passes).
 * **Black or frozen capture** and **track breaks** are reported, never
   hidden.
 * **Picking up again**: the last good view of each recent segment is kept

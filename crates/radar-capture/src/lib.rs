@@ -23,6 +23,7 @@
 pub mod aion2;
 pub mod census;
 pub mod discovery;
+pub mod follow;
 pub mod framing;
 pub mod live;
 pub mod minimap;

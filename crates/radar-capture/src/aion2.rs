@@ -596,6 +596,32 @@ impl Aion2Decoder {
     }
 
     /// A new game connection: entity ids start over.
+    /// What the frame is for following a connection: map data (positions,
+    /// objects, map loads), which only the current map's connection sends;
+    /// who we are (by entity id); or anything else.
+    pub fn frame_kind(&self, frame: &Frame) -> crate::follow::Kind {
+        use crate::follow::Kind;
+        let o = &self.ops;
+        let op = frame.opcode;
+        let map = [
+            o.map_load,
+            o.teleport,
+            o.object_spawn,
+            o.object_removed,
+            o.pos_buff_a,
+            o.pos_buff_b,
+            o.pos_cast,
+            o.pos_target,
+        ];
+        if map.contains(&op) {
+            Kind::Map
+        } else if op == o.self_info || o.self_id_ops.contains(&op) {
+            Kind::Identity
+        } else {
+            Kind::Other
+        }
+    }
+
     pub fn on_new_connection(&mut self) {
         self.self_id = None;
         self.self_from_info = false;

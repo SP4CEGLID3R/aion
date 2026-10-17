@@ -21,7 +21,7 @@ use std::time::Instant;
 use crate::locate::PivotFinder;
 use crate::ncc::{Correlator, Spectra};
 use crate::overlay::{
-    cone_angle, cyan, icon_mask, overlay_mask, ring_radius, ring_visible, CONE_CLEAR,
+    cone_angle, cyan, icon_mask, overlay_mask, ring_radius, ring_radius_between, CONE_CLEAR,
     CONE_EDGE_DEG, DISK_R, EDGE, RING_HALF_W,
 };
 use crate::plane::{Bgra, Mask, Plane};
@@ -49,6 +49,10 @@ pub const RIDGE: f64 = 0.065;
 /// Range ring: sampled every 10th frame, measured every 50th.
 const RING_SAMPLE_EVERY: u64 = 10;
 const RING_EVERY: u64 = 50;
+/// Once known, the ring is looked for within this share of its size.
+const RING_NEAR: f64 = 0.15;
+/// Readings of a new size that must agree before it replaces the known one.
+const RING_CONFIRM: u32 = 3;
 /// Picking an old segment up again: how many recent segments are kept, for
 /// how long, how long a new segment keeps trying, how many good matches make
 /// a segment worth keeping, and how clear the match must be (stricter than
@@ -57,12 +61,6 @@ const RESUME_KEEP: usize = 3;
 /// How far off the arrow a rectangle's centre is expected (px at UI scale
 /// 1) before the arrow is found.
 const PIVOT_SLACK: f64 = 14.0;
-/// The light disk around the arrow: grey-level spread at most this (it is
-/// plain), and its brightness within this of what was learned.
-const DISK_SPREAD: f64 = 22.0;
-const DISK_DRIFT: f64 = 35.0;
-/// Movement within a second that counts as the map scrolling (px at UI scale 1).
-const DISK_SCROLL_PX: f64 = 2.0;
 const RESUME_WITHIN_MS: Millis = 120_000;
 const RESUME_TRY_MS: Millis = 10_000;
 const RESUME_HEALTHY: u64 = 10;
@@ -129,10 +127,6 @@ pub struct Step {
     /// The pivot moved to where the arrow really is, on this frame: what
     /// was measured around the old one (the ring) is to be measured again.
     pub recentred: bool,
-    /// The light disk around the arrow looks as it does on the minimap: the
-    /// frame shows the minimap, not the big map, a dialog or a loading screen
-    /// over its spot. True until the disk's look has been learned.
-    pub disk_ok: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -175,18 +169,18 @@ pub struct MinimapTracker {
     scale: f64,
     cfg: TrackerConfig,
     finder: Option<PivotFinder>,
-    /// Typical brightness of the light disk around the arrow, learned on
-    /// frames that tracked well.
-    disk_ref: Option<f64>,
-    disk_now: Option<(f64, f64)>,
-    /// Recent good positions (t, x, y, segment), to tell a scrolling map.
-    disk_track: VecDeque<(Millis, f64, f64, i64)>,
     cor: Correlator,
     key_px: f64,
     ring_r: Option<f64>,
     base: Option<Mask>,
     cone_masks: Vec<((i64, bool), Mask)>,
     ring_planes: VecDeque<Plane>,
+    /// The ring's size was found the same twice: from then on it is looked
+    /// for near that size, and another size needs RING_CONFIRM agreeing
+    /// readings (cyan terrain such as a coast can outshine the ring).
+    ring_sure: bool,
+    /// A different size seen while the known one is gone: (radius, times).
+    ring_cand: Option<(f64, u32)>,
     n: u64,
     seg: i64,
     /// Segment numbers are never reused (a resumed one keeps its own).
@@ -251,6 +245,8 @@ impl MinimapTracker {
             base: None,
             cone_masks: Vec::new(),
             ring_planes: VecDeque::new(),
+            ring_sure: false,
+            ring_cand: None,
             n: 0,
             seg: -1,
             next_seg: 0,
@@ -265,9 +261,6 @@ impl MinimapTracker {
             last_print: None,
             same_since: None,
             stats: TrackerStats::default(),
-            disk_ref: None,
-            disk_now: None,
-            disk_track: VecDeque::new(),
             finder: cfg.locate_pivot.then(|| PivotFinder::new(w, h, ds, scale)),
             cfg,
         }
@@ -306,80 +299,8 @@ impl MinimapTracker {
         self.cone_masks.clear();
         self.cone = None;
         self.ring_r = None;
-        self.disk_ref = None;
-    }
-
-    /// Whether this frame's arrow disk looks like the minimap's; learns its
-    /// look from frames that `learn` (tracked well).
-    /// Also re-learns a changed look (another area, darker place, other
-    /// lighting) when the frame is surely the minimap: the map scrolls as you
-    /// walk (`scrolling`; the big map or a dialog over it does not), or the
-    /// cyan range ring is there at its size (`ring_seen`; only the minimap
-    /// has it), which also works standing still.
-    fn check_disk(&mut self, learn: bool, scrolling: bool, ring_seen: bool) -> bool {
-        let Some((mean, sd)) = self.disk_now else {
-            return true; // black or odd-sized frames are flagged otherwise
-        };
-        let ok = self
-            .disk_ref
-            .is_none_or(|r| sd <= DISK_SPREAD && (mean - r).abs() <= DISK_DRIFT);
-        if learn && sd <= DISK_SPREAD && (ok || scrolling || ring_seen) {
-            self.disk_ref = Some(self.disk_ref.map_or(mean, |r| r + 0.05 * (mean - r)));
-        }
-        ok
-    }
-
-    /// The map moved by at least DISK_SCROLL_PX within the last second of
-    /// good frames of this segment.
-    fn scrolling(&mut self, s: &Step) -> bool {
-        if !s.good || s.x.is_nan() {
-            return false;
-        }
-        while self
-            .disk_track
-            .front()
-            .is_some_and(|p| s.t - p.0 > 1_500 || p.3 != s.seg)
-        {
-            self.disk_track.pop_front();
-        }
-        let moved = self.disk_track.iter().any(|p| {
-            s.t - p.0 >= 800 && (s.x - p.1).hypot(s.y - p.2) >= DISK_SCROLL_PX * self.scale
-        });
-        self.disk_track.push_back((s.t, s.x, s.y, s.seg));
-        moved
-    }
-
-    /// Mean and spread of the grey ring inside the arrow's light disk
-    /// (outside the arrow, which turns with the character).
-    fn disk_stats(&self, gray: &Plane) -> Option<(f64, f64)> {
-        let r = DISK_R * self.scale;
-        let (r0, r1) = (0.45 * r, 0.75 * r);
-        let (px, py) = (self.pivot.0.round() as isize, self.pivot.1.round() as isize);
-        let m = r1.ceil() as isize;
-        let (mut n, mut sum, mut sq) = (0.0, 0.0, 0.0);
-        for dy in -m..=m {
-            for dx in -m..=m {
-                let d = (dx as f64).hypot(dy as f64);
-                let (x, y) = (px + dx, py + dy);
-                if d < r0
-                    || d > r1
-                    || x < 0
-                    || y < 0
-                    || x >= gray.w as isize
-                    || y >= gray.h as isize
-                {
-                    continue;
-                }
-                let v = gray.at(x as usize, y as usize);
-                n += 1.0;
-                sum += v;
-                sq += v * v;
-            }
-        }
-        (n > 0.0).then(|| {
-            let mean = sum / n;
-            (mean, (sq / n - mean * mean).max(0.0).sqrt())
-        })
+        self.ring_sure = false;
+        self.ring_cand = None;
     }
 
     pub fn downsample(&self) -> usize {
@@ -392,6 +313,46 @@ impl MinimapTracker {
 
     pub fn stats(&self) -> &TrackerStats {
         &self.stats
+    }
+
+    /// The range ring's radius from recent cyan planes, if found (and, for
+    /// a new size, confirmed).
+    fn measure_ring(&mut self, planes: &[Plane]) -> Option<f64> {
+        let r_min = DISK_R * self.scale + 6.0;
+        let anywhere = ring_radius(planes, self.pivot, r_min);
+        let Some(old) = self.ring_r else {
+            return anywhere;
+        };
+        if !self.ring_sure {
+            // Not sure of the first reading yet: a second agreeing one makes
+            // it sure; a different one replaces it.
+            if anywhere.is_some_and(|r| (r - old).abs() <= 2.0) {
+                self.ring_sure = true;
+            }
+            return anywhere;
+        }
+        let near = ring_radius_between(
+            planes,
+            self.pivot,
+            (old * (1.0 - RING_NEAR)).max(r_min),
+            old * (1.0 + RING_NEAR),
+        );
+        if near.is_some() {
+            self.ring_cand = None;
+            return near;
+        }
+        // The known ring is gone (a zoom change?): a new size only once it
+        // has been read the same RING_CONFIRM times in a row.
+        let r = anywhere?;
+        let times = match self.ring_cand {
+            Some((c, n)) if (c - r).abs() <= 2.0 => n + 1,
+            _ => 1,
+        };
+        self.ring_cand = Some((r, times));
+        (times >= RING_CONFIRM).then(|| {
+            self.ring_cand = None;
+            r
+        })
     }
 
     fn base_mask(&mut self) -> Mask {
@@ -528,21 +489,13 @@ impl MinimapTracker {
             frozen: false,
             ring_r: None,
             recentred: false,
-            disk_ok: true,
         }
     }
 
     /// Track one frame (`t` in the packet clock).
     pub fn step(&mut self, t: Millis, frame: &Bgra) -> Step {
         let started = Instant::now();
-        self.disk_now = None;
         let mut out = self.step_inner(t, frame);
-        let scrolling = self.scrolling(&out);
-        let ring_seen = !out.black
-            && self
-                .ring_r
-                .is_some_and(|r| ring_visible(frame, self.pivot, r));
-        out.disk_ok = self.check_disk(out.good && !out.recentred, scrolling, ring_seen);
         self.stats.last_ms = started.elapsed().as_secs_f64() * 1000.0;
         // Frozen capture: identical pixels for a while.
         let print = frame.fingerprint();
@@ -577,8 +530,6 @@ impl MinimapTracker {
             if self.key.is_some() {
                 self.remember();
             }
-            // A loading screen (teleport): the next place may look different.
-            self.disk_ref = None;
             self.key = None;
             self.prev = None;
             let mut s = self.step_result(t, None, false, true, 0.0);
@@ -611,7 +562,7 @@ impl MinimapTracker {
         // to "no movement", so look for it on the first frame already.
         if self.n == 1 || (self.n.is_multiple_of(RING_EVERY) && self.ring_planes.len() >= 3) {
             let planes: Vec<Plane> = self.ring_planes.iter().cloned().collect();
-            ring_new = ring_radius(&planes, self.pivot, DISK_R * self.scale + 6.0);
+            ring_new = self.measure_ring(&planes);
             if let Some(r) = ring_new {
                 if self.ring_r.is_none_or(|old| (old - r).abs() > 1.0) {
                     self.ring_r = Some(r);
@@ -619,7 +570,6 @@ impl MinimapTracker {
                 }
             }
         }
-        self.disk_now = self.disk_stats(&gray);
         let small = if self.ds == 2 { gray.half() } else { gray };
         let small = crop(&small, self.w, self.h);
         let mut mask = self.base_mask();

@@ -241,6 +241,17 @@ pub mod aion2_layout {
         encode_frame([0x35, 0x36], &b)
     }
 
+    /// Map load: the map id and our own position (after a teleport too).
+    pub fn map_load(map: u32, p: [f32; 3]) -> Vec<u8> {
+        let mut b = 11u32.to_le_bytes().to_vec();
+        b.extend(map.to_le_bytes());
+        b.extend([0x3a, 0x03, 0x87, 0x00, 0, 0, 0, 0]);
+        b.extend(xyz(p));
+        b.extend(180f32.to_le_bytes());
+        b.extend([2, 0, 0, 0]);
+        encode_frame([0x21, 0x36], &b)
+    }
+
     /// Who we are (sent once at login).
     pub fn self_info() -> Vec<u8> {
         let mut b = varint(SELF_ID);
@@ -288,6 +299,23 @@ pub mod aion2_layout {
     }
 
     pub fn session_with(t0: f64, seconds: u32, fixes: Fixes) -> Vec<Record> {
+        session_on_map(t0, seconds, fixes, None)
+    }
+
+    /// The same, on another map: `Some((map id, shift))` starts with a map
+    /// load (as after a teleport) and everything is `shift` (game units)
+    /// away from the usual walk.
+    pub fn session_on_map(
+        t0: f64,
+        seconds: u32,
+        fixes: Fixes,
+        map: Option<(u32, [f32; 2])>,
+    ) -> Vec<Record> {
+        let shift = map.map_or([0.0, 0.0], |(_, s)| s);
+        let player = |rel: f64| {
+            let p = player(rel);
+            [p[0] + shift[0], p[1] + shift[1], p[2]]
+        };
         let server: SocketAddr = "198.51.100.30:13328".parse().unwrap();
         let client: SocketAddr = "192.168.0.10:50123".parse().unwrap();
         let mut seq: u32 = 1_000;
@@ -304,6 +332,9 @@ pub mod aion2_layout {
             let t = t0 + rel;
             let mut batch = heartbeat(t);
             if tick == 0 {
+                if let Some((id, _)) = map {
+                    batch.extend(map_load(id, player(0.0)));
+                }
                 if fixes == Fixes::Once {
                     batch.extend(self_info());
                 }

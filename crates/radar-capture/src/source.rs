@@ -2,7 +2,7 @@
 //! recording, and radar events from the built-in AION 2 decoder or a
 //! validated decoder profile.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,6 +18,7 @@ use serde::Serialize;
 use crate::aion2::{Aion2Config, Aion2Decoder, Aion2Status};
 use crate::census::{Census, OpcodeRow};
 use crate::discovery::{append_marker, Marker};
+use crate::follow::MapConnection;
 use crate::live::{Next, PcapApi};
 use crate::minimap::MinimapLink;
 use crate::net::{self, linktype};
@@ -128,6 +129,7 @@ enum Decoding {
 /// Everything after "a packet arrived", shared by live and file input.
 struct Pipeline {
     streams: GameStreams,
+    follow: MapConnection,
     census: Census,
     decoder: Decoding,
     send_events: bool,
@@ -253,6 +255,7 @@ impl Pipeline {
             learned_saved: None,
             minimap: cfg.minimap.clone(),
             streams: GameStreams::new(),
+            follow: MapConnection::new(),
             census: Census::new(),
             decoder,
             send_events,
@@ -285,36 +288,37 @@ impl Pipeline {
         let mut out: Vec<WireEvent> = Vec::new();
         for ev in events {
             match ev {
-                StreamEvent::GameStream {
-                    conn,
-                    flow,
-                    replaced,
-                } => {
-                    log::info!("game stream {conn}: {flow} (replaces {replaced:?})");
-                    // A new connection means new entity ids: reset the radar.
-                    if let Decoding::Aion2(d) = &mut self.decoder {
-                        d.on_new_connection();
-                    }
-                    out.push(WireEvent::ZoneChanged {
-                        t: t_out,
-                        zone: format!("connection-{conn}"),
-                    });
+                StreamEvent::GameStream { conn, flow, .. } => {
+                    // Recognising a connection changes nothing; the decoder
+                    // follows whichever sends map data (see follow.rs).
+                    log::info!("game stream {conn}: {flow}");
                 }
-                StreamEvent::Gap { .. } => {
+                StreamEvent::Gap { conn, .. } => {
                     if let Decoding::Aion2(d) = &mut self.decoder {
-                        out.extend(d.on_gap(t_out));
+                        if self.follow.follows(conn) {
+                            out.extend(d.on_gap(t_out));
+                        }
                     }
                 }
-                StreamEvent::ClientFrame { frame, .. } => {
+                StreamEvent::ClientFrame { conn, frame, .. } => {
                     if let Decoding::Aion2(d) = &mut self.decoder {
-                        out.extend(d.on_client_frame(&frame, t_out));
+                        if self.follow.follows(conn) {
+                            out.extend(d.on_client_frame(&frame, t_out));
+                        }
                     }
                 }
-                StreamEvent::Frame { frame, .. } => {
+                StreamEvent::Frame { conn, frame, .. } => {
                     self.frames += 1;
                     self.census.observe(&frame, t_ms);
                     match &mut self.decoder {
-                        Decoding::Aion2(d) => out.extend(d.on_frame(&frame, t_out)),
+                        Decoding::Aion2(d) => out.extend(follow_frame(
+                            &mut self.follow,
+                            d,
+                            conn,
+                            frame.clone(),
+                            t_ms,
+                            t_out,
+                        )),
                         Decoding::Profile(d) => out.extend(d.decode(&frame, t_out)),
                         Decoding::None => {}
                     }
@@ -610,6 +614,33 @@ impl DataSource for CaptureSource {
     }
 }
 
+/// A frame of connection `conn` for the AION 2 decoder, if that is the
+/// connection being followed; a newly followed one resets the decoder's
+/// per-connection state (new entity ids) and is a zone change.
+fn follow_frame(
+    follow: &mut MapConnection,
+    d: &mut Aion2Decoder,
+    conn: u64,
+    frame: crate::framing::Frame,
+    t_ms: f64,
+    t: Millis,
+) -> Vec<WireEvent> {
+    let kind = d.frame_kind(&frame);
+    let routed = follow.route(conn, kind, frame, t_ms, t);
+    let mut out = Vec::new();
+    if routed.switched {
+        d.on_new_connection();
+        out.push(WireEvent::ZoneChanged {
+            t,
+            zone: format!("connection-{conn}"),
+        });
+    }
+    for (f, ft) in &routed.frames {
+        out.extend(d.on_frame(f, *ft));
+    }
+    out
+}
+
 /// Runs a capture file through framing (and a decoder) as fast as possible.
 /// Used by the CLI and tests. Decoded events are returned whether or not a
 /// profile is validated: this is the tool for checking one.
@@ -637,7 +668,7 @@ pub fn process_records(
     };
     let mut samples = Vec::new();
     let mut events = Vec::new();
-    let mut seen_conns = HashSet::new();
+    let mut follow = MapConnection::new();
     let mut last_t = 0;
     for r in records {
         let Some(seg) = net::parse_frame(r.linktype, &r.data) else {
@@ -647,31 +678,32 @@ pub fn process_records(
         last_t = t;
         for ev in streams.push(&seg, r.t_ms) {
             match ev {
-                StreamEvent::GameStream { conn, .. } => {
-                    if seen_conns.insert(conn) {
-                        if let Decoding::Aion2(d) = &mut decoder {
-                            d.on_new_connection();
+                StreamEvent::GameStream { .. } => {}
+                StreamEvent::Gap { conn, .. } => {
+                    if let Decoding::Aion2(d) = &mut decoder {
+                        if follow.follows(conn) {
+                            events.extend(d.on_gap(t));
                         }
-                        events.push(WireEvent::ZoneChanged {
-                            t,
-                            zone: format!("connection-{conn}"),
-                        });
                     }
                 }
-                StreamEvent::Gap { .. } => {
+                StreamEvent::ClientFrame { conn, frame, .. } => {
                     if let Decoding::Aion2(d) = &mut decoder {
-                        events.extend(d.on_gap(t));
-                    }
-                }
-                StreamEvent::ClientFrame { frame, .. } => {
-                    if let Decoding::Aion2(d) = &mut decoder {
-                        events.extend(d.on_client_frame(&frame, t));
+                        if follow.follows(conn) {
+                            events.extend(d.on_client_frame(&frame, t));
+                        }
                     }
                 }
                 StreamEvent::Frame { conn, t_ms, frame } => {
                     census.observe(&frame, t_ms);
                     match &mut decoder {
-                        Decoding::Aion2(d) => events.extend(d.on_frame(&frame, t)),
+                        Decoding::Aion2(d) => events.extend(follow_frame(
+                            &mut follow,
+                            d,
+                            conn,
+                            frame.clone(),
+                            t_ms,
+                            t,
+                        )),
                         Decoding::Profile(d) => events.extend(d.decode(&frame, t)),
                         Decoding::None => {}
                     }

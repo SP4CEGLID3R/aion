@@ -58,27 +58,24 @@ how far it is and whether it is up or down.
 
 ### Fixed
 
-- After a teleport the minimap could stay missing from the radar, and
-  opening the wings did not bring it back: another area's minimap zoom
-  hid the picture until the scale was re-measured from walking, and the
-  arrow disk's new look was refused until you walked. The picture is now
-  redrawn at once at the scale the range ring gives, and the new look is
-  taken on as soon as the range ring shows it is the minimap (loading
-  screens reset it).
-
-- The minimap picture in the radar could be missing for long stretches
-  (e.g. when a cube appeared) after the zoom fix: it was drawn only while
-  the position was confirmed. It is now drawn whenever it is the minimap
-  (it is always centred on you), and a changed look of the arrow's disk
-  (darker places) is taken on within a second of walking.
-
-- The radar could suddenly show a hugely zoomed-in map: whatever was on
-  screen at the minimap's spot (the big map, a dialog, a loading screen) or
-  a minimap at a new zoom was drawn as if it were the minimap. The game's
-  minimap is now drawn only while it is the one being followed at the known
-  scale (its arrow disk is checked on every frame); otherwise the radar
-  shows its plain grid until it is.
-
+- **The radar followed the wrong connection.** The game keeps more than one
+  connection open (seen on a player's PC: two game servers and a local
+  service on 127.0.0.1), and each newly recognised one reset the radar,
+  while all were decoded together. Your character could then not be
+  recognised ("Waiting for your position", opening the wings did not help)
+  and the minimap went missing, until it sorted itself out minutes later or
+  until the next teleport broke it again. The radar now follows the one
+  connection that carries map data, and switches only when a new connection
+  starts carrying it (a teleport).
+- **The minimap stays in the radar.** It is drawn whenever it is read,
+  also while the radar waits for your position, after a teleport and while
+  the position is unsure. It is not drawn on black captures (loading
+  screens) or frozen ones.
+- **Misread range ring.** Cyan terrain (a coast, a lake) could be taken
+  for the minimap's range ring; tracking then stopped until you walked
+  between two position reports. Once the ring is known, it is looked for
+  near its size, and a new size counts only after three agreeing readings
+  (a real zoom change).
 - With *click-through* on, the radar's settings button could not be
   clicked and there was no other way back to the settings: **Ctrl+Alt+S**
   now opens them at any time, also while the game has focus.

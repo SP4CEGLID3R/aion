@@ -43,8 +43,9 @@ export function drawScene(ctx: CanvasRenderingContext2D, scene: Scene, width: nu
   ctx.arc(view.cx, view.cy, view.radiusPx, 0, Math.PI * 2);
   ctx.fillStyle = withAlpha(c.background, 0.78);
   ctx.fill();
-  // The game's minimap is centred on the player and has its own arrow there.
-  const gameMap = scene.background && scene.player && scene.background.pxPerM > 0 ? scene.background : null;
+  // The game's minimap is centred on the player and has its own arrow there,
+  // so it is drawn even while the radar waits for the player's position.
+  const gameMap = scene.background && scene.background.pxPerM > 0 ? scene.background : null;
   if (gameMap) drawBackground(ctx, scene, gameMap);
   else if (settings.mapGrid && scene.player) drawGrid(ctx, scene);
   if (settings.showTrail) drawTrail(ctx, scene);

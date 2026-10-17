@@ -291,11 +291,10 @@ mod dev_synth {
             let mut cx = 700.0 + (x - x0) * self.k;
             let mut cy = 600.0 + (y - y0) * self.k;
             // RADAR_VISION_SYNTH_TELEPORT=<ms>: a 3 s loading screen at that
-            // time, then another place where the arrow's disk looks darker.
+            // time, then another place.
             let teleport = std::env::var("RADAR_VISION_SYNTH_TELEPORT")
                 .ok()
                 .and_then(|v| v.parse::<f64>().ok());
-            let mut disk_dim = 0.0;
             if let Some(at) = teleport.filter(|at| rel >= *at) {
                 if rel < at + 3_000.0 {
                     *out = vec![0u8; self.w * self.h * 4];
@@ -303,7 +302,6 @@ mod dev_synth {
                 }
                 cx += 350.0;
                 cy -= 250.0;
-                disk_dim = 55.0;
             }
             let s = rel / 1000.0;
             let ov = Overlay {
@@ -315,7 +313,7 @@ mod dev_synth {
                 // Not quite centred, like a minimap rectangle that is a few
                 // pixels off on a real screen.
                 pivot: Some((self.w as f64 / 2.0 + 7.0, self.h as f64 / 2.0 - 5.0)),
-                disk_dim,
+                decoy_ring: None,
             };
             *out = frame(&self.map, cx, cy, self.w, self.h, &ov);
         }

@@ -465,135 +465,52 @@ fn standing_still_never_moves_the_pivot() {
     assert_eq!(tr.pivot(), (155.5, 103.0));
 }
 
-#[test]
-fn the_big_map_over_the_minimap_is_told_apart_from_the_minimap() {
-    // 30 s walking; from 15 s to 20 s something else covers the minimap's
-    // spot (the big map: another map, no arrow disk, no cone).
+/// Walks `path` for `seconds`; `ov(i)` gives the overlay for frame `i`.
+/// Returns the steps and the tracker.
+fn walk_with(seconds: i64, ov: impl Fn(i64) -> Overlay) -> (Vec<Step>, MinimapTracker) {
     let (w, h) = (311, 206);
     let map = SynthMap::new(1600, 1300, 7);
-    let big = SynthMap::new(1600, 1300, 11);
     let mut tr = MinimapTracker::new(w, h, TrackerConfig::default());
-    let (mut false_alarms, mut missed, mut covered) = (0, 0, 0);
-    for i in 0..300i64 {
+    let mut steps = Vec::new();
+    for i in 0..seconds * 10 {
         let t = 1_790_000_000_000 + i * 100;
         let (x, y) = path(i * 100);
-        let s = i as f64 / 10.0;
-        let cover = (150..200).contains(&i);
-        let px = if cover {
-            let bare = Overlay {
-                ui_scale: 0.01,
-                ring_r: 0.0,
-                ..Overlay::default()
-            };
-            frame(&big, 800.0, 650.0, w, h, &bare)
-        } else {
-            let ov = Overlay {
-                cone: (20.0 + 40.0 * (s / 5.0).sin()).rem_euclid(360.0),
-                facing: (90.0 + 30.0 * (s / 3.0).cos()).rem_euclid(360.0),
-                ..Overlay::default()
-            };
-            frame(&map, x, y, w, h, &ov)
-        };
-        let st = tr.step(t, &Bgra::packed(w, h, &px).unwrap());
-        if cover {
-            covered += 1;
-            if st.disk_ok {
-                missed += 1;
-            }
-        } else if !st.disk_ok {
-            false_alarms += 1;
-        }
+        let px = frame(&map, x, y, w, h, &ov(i));
+        steps.push(tr.step(t, &Bgra::packed(w, h, &px).unwrap()));
     }
-    assert_eq!(false_alarms, 0, "minimap frames taken for something else");
-    assert_eq!(
-        missed, 0,
-        "of {covered} covered frames, {missed} passed as the minimap"
-    );
+    (steps, tr)
 }
 
 #[test]
-fn a_darker_arrow_disk_is_taken_on_while_walking() {
-    // The disk's look changes (a darker place) at 10 s; walking on, the
-    // minimap must count as the minimap again within ~2 s, and stay so.
-    let (w, h) = (311, 206);
-    let map = SynthMap::new(1600, 1300, 7);
-    let mut tr = MinimapTracker::new(w, h, TrackerConfig::default());
-    let mut refused_after = Vec::new();
-    for i in 0..300i64 {
-        let t = 1_790_000_000_000 + i * 100;
-        let (x, y) = path(i * 100);
-        let ov = Overlay {
-            disk_dim: if i >= 100 { 60.0 } else { 0.0 },
-            ..Overlay::default()
-        };
-        let px = frame(&map, x, y, w, h, &ov);
-        let st = tr.step(t, &Bgra::packed(w, h, &px).unwrap());
-        if !st.disk_ok {
-            refused_after.push(i - 100);
-        }
-    }
-    eprintln!("refused frames (relative to the change): {refused_after:?}");
+fn cyan_terrain_does_not_replace_the_range_ring() {
+    // The ring (67 px) is known; from 15 s a stronger cyan circle (a coast
+    // around the player) is in view too.
+    let (steps, tr) = walk_with(60, |i| Overlay {
+        decoy_ring: (i >= 150).then_some(95.0),
+        ..Overlay::default()
+    });
+    let reported: Vec<f64> = steps.iter().skip(150).filter_map(|s| s.ring_r).collect();
+    eprintln!("ring readings after the decoy: {reported:?}");
     assert!(
-        refused_after.iter().all(|&d| (0..25).contains(&d)),
-        "refused {refused_after:?}"
+        reported.iter().all(|r| (r - 67.0).abs() < 3.0),
+        "{reported:?}"
     );
+    assert!((tr.ring_radius().unwrap() - 67.0).abs() < 3.0);
+    assert_eq!(steps.iter().filter(|s| s.brk).count(), 0);
 }
 
 #[test]
-fn after_a_teleport_a_new_look_of_the_minimap_is_taken_on_standing_still() {
-    // Walk 10 s, a loading screen (black) for 3 s, then another place where
-    // the arrow's disk looks darker and the player stands still: the minimap
-    // must count as the minimap again within a second.
-    let (w, h) = (311, 206);
-    let map = SynthMap::new(1600, 1300, 7);
-    let other = SynthMap::new(1600, 1300, 13);
-    let mut tr = MinimapTracker::new(w, h, TrackerConfig::default());
-    let mut refused = Vec::new();
-    for i in 0..250i64 {
-        let t = 1_790_000_000_000 + i * 100;
-        let px = if i < 100 {
-            let (x, y) = path(i * 100);
-            frame(&map, x, y, w, h, &Overlay::default())
-        } else if i < 130 {
-            vec![0u8; w * h * 4]
-        } else {
-            let ov = Overlay {
-                disk_dim: 60.0,
-                cone: 200.0,
-                ..Overlay::default()
-            };
-            frame(&other, 500.0, 400.0, w, h, &ov)
-        };
-        let st = tr.step(t, &Bgra::packed(w, h, &px).unwrap());
-        if i >= 130 && !st.disk_ok {
-            refused.push(i - 130);
-        }
-    }
-    eprintln!("refused after the teleport: {refused:?}");
-    assert!(refused.iter().all(|&d| d < 10), "refused {refused:?}");
-}
-
-#[test]
-fn a_new_look_with_the_range_ring_is_taken_on_without_walking() {
-    // No loading screen in between, standing still, the disk turns darker:
-    // the range ring says it is still the minimap.
-    let (w, h) = (311, 206);
-    let map = SynthMap::new(1600, 1300, 7);
-    let mut tr = MinimapTracker::new(w, h, TrackerConfig::default());
-    let mut refused = Vec::new();
-    for i in 0..200i64 {
-        let t = 1_790_000_000_000 + i * 100;
-        let (x, y) = if i < 80 { path(i * 100) } else { path(8_000) };
-        let ov = Overlay {
-            disk_dim: if i >= 100 { 60.0 } else { 0.0 },
-            ..Overlay::default()
-        };
-        let px = frame(&map, x, y, w, h, &ov);
-        let st = tr.step(t, &Bgra::packed(w, h, &px).unwrap());
-        if i >= 100 && !st.disk_ok {
-            refused.push(i - 100);
-        }
-    }
-    eprintln!("refused after the change: {refused:?}");
-    assert!(refused.iter().all(|&d| d < 15), "refused {refused:?}");
+fn a_real_zoom_change_of_the_ring_is_taken_on() {
+    // The minimap zooms at 15 s: the ring is now 50 px.
+    let (steps, tr) = walk_with(45, |i| Overlay {
+        ring_r: if i < 150 { 67.0 } else { 50.0 },
+        ..Overlay::default()
+    });
+    let first_new = steps
+        .iter()
+        .position(|s| s.ring_r.is_some_and(|r| (r - 50.0).abs() < 3.0))
+        .expect("the new ring size is taken on");
+    eprintln!("new ring size reported at {:.1} s", first_new as f64 / 10.0);
+    assert!(first_new <= 150 + 200, "taken on only at frame {first_new}");
+    assert!((tr.ring_radius().unwrap() - 50.0).abs() < 3.0);
 }

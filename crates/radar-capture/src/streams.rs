@@ -7,8 +7,8 @@
 //! port has to be known, and traffic through a local proxy is found too.
 //!
 //! The game opens a new connection per map/dungeon, and entity ids are per
-//! connection (Aether's finding), so a newly recognised game connection that
-//! replaces another is reported as a zone change.
+//! connection (Aether's finding). Several game connections can be open at
+//! once; which one the decoder follows is decided in `follow.rs`.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;

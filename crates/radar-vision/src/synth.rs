@@ -150,8 +150,9 @@ pub struct Overlay {
     /// Where the player arrow is in the frame; `None` = the centre (a
     /// rectangle that is not exactly centred on the arrow has it elsewhere).
     pub pivot: Option<(f64, f64)>,
-    /// Darkens the arrow's light disk by this many grey levels (lighting).
-    pub disk_dim: f64,
+    /// A strong cyan circle at this radius that is not the range ring (cyan
+    /// terrain, such as a coast around the player).
+    pub decoy_ring: Option<f64>,
 }
 
 impl Default for Overlay {
@@ -163,7 +164,7 @@ impl Default for Overlay {
             dots: Vec::new(),
             ui_scale: 1.0,
             pivot: None,
-            disk_dim: 0.0,
+            decoy_ring: None,
         }
     }
 }
@@ -192,6 +193,9 @@ pub fn frame(map: &SynthMap, cx: f64, cy: f64, w: usize, h: usize, ov: &Overlay)
                     *v = *v * 0.3 + 255.0 * 0.7;
                 }
             }
+            if ov.decoy_ring.is_some_and(|d| (r - d * s).abs() < 1.5) {
+                c = [40.0, 225.0, 235.0];
+            }
             if (r - ov.ring_r * s).abs() < 1.2 {
                 for (k, v) in c.iter_mut().enumerate() {
                     *v = *v * 0.5 + [60.0, 200.0, 200.0][k] * 0.5;
@@ -199,7 +203,7 @@ pub fn frame(map: &SynthMap, cx: f64, cy: f64, w: usize, h: usize, ov: &Overlay)
             }
             if r <= 24.0 * s {
                 // Light disk with a dark arrow pointing at `facing`.
-                c = [235.0, 228.0, 205.0].map(|v| v - ov.disk_dim);
+                c = [235.0, 228.0, 205.0];
                 let rel = crate::overlay::circ_diff(ang, ov.facing);
                 let along = r * rel.to_radians().cos();
                 let across = (r * rel.to_radians().sin()).abs();
