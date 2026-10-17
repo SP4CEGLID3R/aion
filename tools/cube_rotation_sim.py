@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Monte Carlo comparison of hidden-cube farming rotations (AION 2, Verteron).
+"""Monte Carlo comparison of hidden-cube farming rotations (AION 2).
 
 The world follows what is known about hidden cubes (see docs/07-cube-patterns.md):
 
-* 95 cube groups in Verteron, grouped into areas by the counts guides give
-  (the densest areas hold 8-9 groups); at most one cube per group at a time.
+* The zone's cube groups (Altgard 59, Verteron 95), grouped into areas by
+  the counts guides give (densest: Altgard 6, Verteron 8-9 groups); at most
+  one cube per group at a time. Areas take longer to sweep the more spots
+  they hold (Altgard about 23 per group, Verteron about 15).
 * An opened cube's group spawns again after a delay. The delay is unknown:
   each simulated session draws its own median (log-uniform 5-90 min), each
-  group varies around it and every respawn varies again. One dense area
-  (Ellun River Midstream) waits 1.5x as long (data-mined 5400 s vs 3600 s).
+  group varies around it and every respawn varies again. In Verteron, Ellun
+  River Midstream waits 1.5x as long (data-mined 5400 s vs 3600 s).
 * Other players open cubes too. How fast is unknown: each session draws the
   mean time an available cube survives (log-uniform 20 s - 20 min; in real
   captures fresh cubes were taken in 18-27 s and cubes found on arrival were
@@ -26,7 +28,7 @@ The world follows what is known about hidden cubes (see docs/07-cube-patterns.md
 Every session draws the unknowns and a random layout of the areas, then runs
 every rotation on the same world for two hours. Usage:
 
-    python3 tools/cube_rotation_sim.py --sims 10000
+    python3 tools/cube_rotation_sim.py --zone altgard --sims 10000
 """
 
 import argparse
@@ -36,14 +38,36 @@ import time
 
 import numpy as np
 
-# Groups per area, densest first. Index 0 = Altamia Canyon, 1 = Ellun River
-# Midstream, 2 = Verteron Fortress Ruins (names and counts from guides); the
-# rest are unnamed areas that bring the total to 95 groups.
-AREA_GROUPS = np.array([9, 9, 8, 8, 8, 7, 7, 7, 6, 6, 5, 5, 5, 5])
-AREA_NAMES = ["Altamia Canyon", "Ellun River Midstream", "Fortress Ruins"] + [
-    f"area {i + 1}" for i in range(3, len(AREA_GROUPS))
-]
-LONG_DELAY_AREA = 1  # Ellun River Midstream: 1.5x respawn delay
+# Groups per area, densest first. Named areas and their counts are from
+# guides; the rest are unnamed areas that bring the total to the zone's
+# groups (data-mined: Verteron 95 groups / 1,440 spots, Altgard 59 / 1,371).
+ZONES = {
+    "verteron": {
+        "groups": [9, 9, 8, 8, 8, 7, 7, 7, 6, 6, 5, 5, 5, 5],
+        "names": ["Altamia Canyon", "Ellun River Midstream", "Verteron Fortress Ruins"],
+        "spots_per_group": 1440 / 95,
+        "long_delay_area": 1,  # Ellun River Midstream: 1.5x respawn delay
+    },
+    "altgard": {
+        "groups": [6, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 3, 3, 3],
+        "names": ["Dredgion Crash Site"],
+        "spots_per_group": 1371 / 59,
+        "long_delay_area": None,
+    },
+}
+AREA_GROUPS = np.array(ZONES["altgard"]["groups"])
+SPOTS_PER_GROUP = ZONES["altgard"]["spots_per_group"]
+LONG_DELAY_AREA = ZONES["altgard"]["long_delay_area"]
+
+
+def use_zone(name):
+    global AREA_GROUPS, SPOTS_PER_GROUP, LONG_DELAY_AREA
+    z = ZONES[name]
+    AREA_GROUPS = np.array(z["groups"])
+    SPOTS_PER_GROUP = z["spots_per_group"]
+    LONG_DELAY_AREA = z["long_delay_area"]
+    return z["names"] + [f"area {i + 1}" for i in range(len(z["names"]), len(z["groups"]))]
+
 CHANNELS = 3
 MAP_M = 3000.0  # the areas lie in a square of this size
 MIN_AREA_GAP_M = 300.0
@@ -82,11 +106,13 @@ class World:
         g = len(self.area_of_group)
         self.speed = rng.uniform(8, 14, n)  # m/s, mount / flying
         self.switch_s = rng.uniform(10, 30, n)  # channel change
-        sweep_base = rng.uniform(60, 120, n)  # s to sweep an area of 7 groups
-        self.sweep_s = sweep_base[:, None] * np.sqrt(AREA_GROUPS / 7.0)[None, :]
+        sweep_base = rng.uniform(60, 120, n)  # s to sweep an area of 100 spots
+        spots = AREA_GROUPS * SPOTS_PER_GROUP
+        self.sweep_s = sweep_base[:, None] * np.sqrt(spots / 100.0)[None, :]
         self.delay_median = np.exp(rng.uniform(math.log(5 * 60), math.log(90 * 60), n))
         group_delay = self.delay_median[:, None] * rng.lognormal(0, 0.4, (n, g))
-        group_delay[:, self.area_of_group == LONG_DELAY_AREA] *= 1.5
+        if LONG_DELAY_AREA is not None:
+            group_delay[:, self.area_of_group == LONG_DELAY_AREA] *= 1.5
         self.group_delay = group_delay
         self.others_mean = np.exp(rng.uniform(math.log(20), math.log(20 * 60), n))
         self.gamma = rng.uniform(0, 1, n)
@@ -270,10 +296,13 @@ def summarize(results, world):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--zone", choices=sorted(ZONES), default="altgard")
     ap.add_argument("--sims", type=int, default=10000)
     ap.add_argument("--seed", type=int, default=20261017)
     ap.add_argument("--json", default="")
     args = ap.parse_args()
+    names = use_zone(args.zone)
+    print(f"{args.zone}: {AREA_GROUPS.sum()} groups in {len(AREA_GROUPS)} areas; densest: {names[0]}\n")
     world = World(args.sims, args.seed)
     results = {}
     for i, (name, (plan, k)) in enumerate(strategies().items()):
