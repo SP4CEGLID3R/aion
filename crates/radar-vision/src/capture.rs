@@ -288,8 +288,23 @@ mod dev_synth {
             let (x, y) = player(rel);
             let (x0, y0) = player(0.0);
             // Right = +X, down = +Y, as on the game's minimap.
-            let cx = 700.0 + (x - x0) * self.k;
-            let cy = 600.0 + (y - y0) * self.k;
+            let mut cx = 700.0 + (x - x0) * self.k;
+            let mut cy = 600.0 + (y - y0) * self.k;
+            // RADAR_VISION_SYNTH_TELEPORT=<ms>: a 3 s loading screen at that
+            // time, then another place where the arrow's disk looks darker.
+            let teleport = std::env::var("RADAR_VISION_SYNTH_TELEPORT")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok());
+            let mut disk_dim = 0.0;
+            if let Some(at) = teleport.filter(|at| rel >= *at) {
+                if rel < at + 3_000.0 {
+                    *out = vec![0u8; self.w * self.h * 4];
+                    return;
+                }
+                cx += 350.0;
+                cy -= 250.0;
+                disk_dim = 55.0;
+            }
             let s = rel / 1000.0;
             let ov = Overlay {
                 cone: (30.0 + 50.0 * (s / 6.0).sin()).rem_euclid(360.0),
@@ -300,7 +315,7 @@ mod dev_synth {
                 // Not quite centred, like a minimap rectangle that is a few
                 // pixels off on a real screen.
                 pivot: Some((self.w as f64 / 2.0 + 7.0, self.h as f64 / 2.0 - 5.0)),
-                disk_dim: 0.0,
+                disk_dim,
             };
             *out = frame(&self.map, cx, cy, self.w, self.h, &ov);
         }

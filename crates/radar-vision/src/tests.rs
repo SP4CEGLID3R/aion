@@ -538,3 +538,62 @@ fn a_darker_arrow_disk_is_taken_on_while_walking() {
         "refused {refused_after:?}"
     );
 }
+
+#[test]
+fn after_a_teleport_a_new_look_of_the_minimap_is_taken_on_standing_still() {
+    // Walk 10 s, a loading screen (black) for 3 s, then another place where
+    // the arrow's disk looks darker and the player stands still: the minimap
+    // must count as the minimap again within a second.
+    let (w, h) = (311, 206);
+    let map = SynthMap::new(1600, 1300, 7);
+    let other = SynthMap::new(1600, 1300, 13);
+    let mut tr = MinimapTracker::new(w, h, TrackerConfig::default());
+    let mut refused = Vec::new();
+    for i in 0..250i64 {
+        let t = 1_790_000_000_000 + i * 100;
+        let px = if i < 100 {
+            let (x, y) = path(i * 100);
+            frame(&map, x, y, w, h, &Overlay::default())
+        } else if i < 130 {
+            vec![0u8; w * h * 4]
+        } else {
+            let ov = Overlay {
+                disk_dim: 60.0,
+                cone: 200.0,
+                ..Overlay::default()
+            };
+            frame(&other, 500.0, 400.0, w, h, &ov)
+        };
+        let st = tr.step(t, &Bgra::packed(w, h, &px).unwrap());
+        if i >= 130 && !st.disk_ok {
+            refused.push(i - 130);
+        }
+    }
+    eprintln!("refused after the teleport: {refused:?}");
+    assert!(refused.iter().all(|&d| d < 10), "refused {refused:?}");
+}
+
+#[test]
+fn a_new_look_with_the_range_ring_is_taken_on_without_walking() {
+    // No loading screen in between, standing still, the disk turns darker:
+    // the range ring says it is still the minimap.
+    let (w, h) = (311, 206);
+    let map = SynthMap::new(1600, 1300, 7);
+    let mut tr = MinimapTracker::new(w, h, TrackerConfig::default());
+    let mut refused = Vec::new();
+    for i in 0..200i64 {
+        let t = 1_790_000_000_000 + i * 100;
+        let (x, y) = if i < 80 { path(i * 100) } else { path(8_000) };
+        let ov = Overlay {
+            disk_dim: if i >= 100 { 60.0 } else { 0.0 },
+            ..Overlay::default()
+        };
+        let px = frame(&map, x, y, w, h, &ov);
+        let st = tr.step(t, &Bgra::packed(w, h, &px).unwrap());
+        if i >= 100 && !st.disk_ok {
+            refused.push(i - 100);
+        }
+    }
+    eprintln!("refused after the change: {refused:?}");
+    assert!(refused.iter().all(|&d| d < 15), "refused {refused:?}");
+}

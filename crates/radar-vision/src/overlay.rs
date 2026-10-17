@@ -215,6 +215,30 @@ pub fn cyan(frame: &Bgra) -> Plane {
     p
 }
 
+/// The cyan range ring is on this frame at radius `r` around the pivot:
+/// cyan along the circle stands out against just inside and outside it.
+/// Only the minimap has it (not the big map or a dialog over its spot).
+pub fn ring_visible(frame: &Bgra, pivot: (f64, f64), r: f64) -> bool {
+    let cyan_at = |rr: f64| -> Option<f64> {
+        let (mut s, mut n) = (0.0, 0.0);
+        for k in 0..180 {
+            let (sn, cs) = ((k as f64 * 2.0).to_radians()).sin_cos();
+            let (x, y) = (pivot.0 + sn * rr, pivot.1 - cs * rr);
+            if x < 0.0 || y < 0.0 || x >= frame.w as f64 || y >= frame.h as f64 {
+                continue;
+            }
+            let (cr, cg, cb) = frame.rgb(x as usize, y as usize);
+            s += ((cg as f64 - cr as f64) + (cb as f64 - cr as f64)).max(0.0);
+            n += 1.0;
+        }
+        (n >= 30.0).then(|| s / n)
+    };
+    match (cyan_at(r), cyan_at(r - 6.0), cyan_at(r + 6.0)) {
+        (Some(on), Some(a), Some(b)) => on - a.max(b) >= 8.0,
+        _ => false,
+    }
+}
+
 /// Radius of the cyan range ring around the pivot from a few cyan planes
 /// (per-pixel median), or `None` when no ring stands out.
 pub fn ring_radius(planes: &[Plane], pivot: (f64, f64), r_min: f64) -> Option<f64> {

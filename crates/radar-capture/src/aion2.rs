@@ -642,7 +642,7 @@ impl Aion2Decoder {
     pub fn minimap_view(&self) -> MinimapView {
         let st = self.minimap.status(self.last_t);
         MinimapView {
-            px_per_m: st.px_per_m,
+            px_per_m: Some(self.minimap.picture_px_per_m()),
             calibrated: self.minimap.calibrated(),
             state: st.state,
             reason: st.reason,

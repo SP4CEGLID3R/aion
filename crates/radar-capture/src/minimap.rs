@@ -47,7 +47,8 @@ pub struct MinimapSample {
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MinimapView {
-    /// Minimap pixels per metre (seeded until calibrated).
+    /// Minimap pixels per metre for drawing it (seeded until calibrated;
+    /// right after a zoom change, scaled by the range ring's change).
     pub px_per_m: Option<f64>,
     pub calibrated: bool,
     /// "tracking", "uncertain", "recalibrating", "no fix" or "off".

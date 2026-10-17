@@ -58,6 +58,14 @@ how far it is and whether it is up or down.
 
 ### Fixed
 
+- After a teleport the minimap could stay missing from the radar, and
+  opening the wings did not bring it back: another area's minimap zoom
+  hid the picture until the scale was re-measured from walking, and the
+  arrow disk's new look was refused until you walked. The picture is now
+  redrawn at once at the scale the range ring gives, and the new look is
+  taken on as soon as the range ring shows it is the minimap (loading
+  screens reset it).
+
 - The minimap picture in the radar could be missing for long stretches
   (e.g. when a cube appeared) after the zoom fix: it was drawn only while
   the position was confirmed. It is now drawn whenever it is the minimap

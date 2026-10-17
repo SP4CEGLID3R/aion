@@ -21,8 +21,8 @@ use std::time::Instant;
 use crate::locate::PivotFinder;
 use crate::ncc::{Correlator, Spectra};
 use crate::overlay::{
-    cone_angle, cyan, icon_mask, overlay_mask, ring_radius, CONE_CLEAR, CONE_EDGE_DEG, DISK_R,
-    EDGE, RING_HALF_W,
+    cone_angle, cyan, icon_mask, overlay_mask, ring_radius, ring_visible, CONE_CLEAR,
+    CONE_EDGE_DEG, DISK_R, EDGE, RING_HALF_W,
 };
 use crate::plane::{Bgra, Mask, Plane};
 
@@ -311,17 +311,19 @@ impl MinimapTracker {
 
     /// Whether this frame's arrow disk looks like the minimap's; learns its
     /// look from frames that `learn` (tracked well).
-    /// Also re-learns a changed look while the map scrolls (`scrolling`): the
-    /// minimap scrolls as you walk, the big map or a dialog over it does not,
-    /// so darker places or other lighting are taken on within a second or so.
-    fn check_disk(&mut self, learn: bool, scrolling: bool) -> bool {
+    /// Also re-learns a changed look (another area, darker place, other
+    /// lighting) when the frame is surely the minimap: the map scrolls as you
+    /// walk (`scrolling`; the big map or a dialog over it does not), or the
+    /// cyan range ring is there at its size (`ring_seen`; only the minimap
+    /// has it), which also works standing still.
+    fn check_disk(&mut self, learn: bool, scrolling: bool, ring_seen: bool) -> bool {
         let Some((mean, sd)) = self.disk_now else {
             return true; // black or odd-sized frames are flagged otherwise
         };
         let ok = self
             .disk_ref
             .is_none_or(|r| sd <= DISK_SPREAD && (mean - r).abs() <= DISK_DRIFT);
-        if learn && sd <= DISK_SPREAD && (ok || scrolling) {
+        if learn && sd <= DISK_SPREAD && (ok || scrolling || ring_seen) {
             self.disk_ref = Some(self.disk_ref.map_or(mean, |r| r + 0.05 * (mean - r)));
         }
         ok
@@ -536,7 +538,11 @@ impl MinimapTracker {
         self.disk_now = None;
         let mut out = self.step_inner(t, frame);
         let scrolling = self.scrolling(&out);
-        out.disk_ok = self.check_disk(out.good && !out.recentred, scrolling);
+        let ring_seen = !out.black
+            && self
+                .ring_r
+                .is_some_and(|r| ring_visible(frame, self.pivot, r));
+        out.disk_ok = self.check_disk(out.good && !out.recentred, scrolling, ring_seen);
         self.stats.last_ms = started.elapsed().as_secs_f64() * 1000.0;
         // Frozen capture: identical pixels for a while.
         let print = frame.fingerprint();
@@ -571,6 +577,8 @@ impl MinimapTracker {
             if self.key.is_some() {
                 self.remember();
             }
+            // A loading screen (teleport): the next place may look different.
+            self.disk_ref = None;
             self.key = None;
             self.prev = None;
             let mut s = self.step_result(t, None, false, true, 0.0);

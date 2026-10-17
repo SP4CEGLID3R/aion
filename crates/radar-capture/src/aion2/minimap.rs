@@ -743,14 +743,23 @@ impl MinimapFusion {
 
     /// The latest minimap picture shows where we are at the known scale.
     /// The minimap is always centred on the player, so the picture is right
-    /// to draw whenever it is current and at the known scale, however sure
-    /// the position itself is. Not while the range ring says the zoom changed.
+    /// to draw whenever it is current, however sure the position itself is.
     pub fn picture_ok(&self, t: Millis) -> bool {
-        self.ring_odd == 0
-            && !matches!(self.recal, Some(Recal::Ring(_)))
-            && !self.black
-            && !self.frozen
-            && self.last_frame_t.is_some_and(|f| t - f <= STALE_FRAME_MS)
+        !self.black && !self.frozen && self.last_frame_t.is_some_and(|f| t - f <= STALE_FRAME_MS)
+    }
+
+    /// Minimap pixels per metre for drawing the picture. After a zoom change
+    /// (the range ring changed size; another area can have another zoom) the
+    /// ring's own change gives the new scale at once, while legs confirm it
+    /// for the position.
+    pub fn picture_px_per_m(&self) -> f64 {
+        let px = self.px_per_m();
+        match (&self.recal, self.ring_now, self.ring_base) {
+            (Some(Recal::Ring(_)), Some(now), Some(base)) if now > 0.0 && base > 0.0 => {
+                px * now / base
+            }
+            _ => px,
+        }
     }
 
     pub fn px_per_m(&self) -> f64 {
@@ -886,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn the_minimap_picture_is_drawn_without_a_sure_position_but_not_after_a_zoom_change() {
+    fn the_minimap_picture_is_drawn_without_a_sure_position_and_rescaled_after_a_zoom_change() {
         let world = World {
             k: SEED_K,
             m: AXIS_MAPS[0].1,
@@ -903,14 +912,21 @@ mod tests {
         }
         assert_ne!(f.locate(2_900).kind, LocKind::Live);
         assert!(f.picture_ok(2_900));
-        // The range ring changes size twice in a row: a zoom change, the
-        // picture waits for the new scale.
-        for (i, t) in [3_000, 3_100].into_iter().enumerate() {
+        // The range ring changes size twice in a row (another area with
+        // another zoom, e.g. after a teleport): the picture stays, drawn at
+        // the scale the ring gives, without waiting for position legs.
+        let before = f.picture_px_per_m();
+        for t in [3_000, 3_100] {
             let mut s = world.sample(t);
-            s.ring_r = Some(90.0 + i as f64 * 0.1);
+            s.ring_r = Some(90.0);
             f.on_frame(&s);
         }
-        assert!(!f.picture_ok(3_100));
+        assert!(f.picture_ok(3_100));
+        let after = f.picture_px_per_m();
+        assert!(
+            (after / before - 90.0 / 67.0).abs() < 1e-9,
+            "{before} -> {after}"
+        );
         // A black capture or no frames for a while: nothing to draw.
         let mut g = MinimapFusion::new(UPM, None);
         let mut s = world.sample(0);
