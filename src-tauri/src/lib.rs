@@ -490,6 +490,7 @@ async fn reset_settings(
 
 fn apply_settings(app: &AppHandle, state: &AppState, settings: RadarSettings) -> SettingsUpdate {
     let (settings, mut warnings) = settings.sanitized();
+    let hidden;
     {
         let mut inner = state.lock();
         if needs_restart(&inner.settings, &settings) || inner.engine.is_none() {
@@ -509,13 +510,13 @@ fn apply_settings(app: &AppHandle, state: &AppState, settings: RadarSettings) ->
             engine.update_display(settings.stale_display, settings.update_hz);
         }
         inner.settings = settings.clone();
+        hidden = inner.radar_hidden;
     }
     if let Err(e) = state.store.save(&settings) {
         log::error!("could not save settings: {e}");
         warnings.push(format!("settings applied but not saved: {e}"));
     }
     if let Some(w) = app.get_webview_window(RADAR) {
-        let hidden = state.lock().radar_hidden;
         apply_window_mode(&w, &settings, hidden);
     }
     apply_protection(app, &settings);
@@ -529,7 +530,9 @@ fn apply_settings(app: &AppHandle, state: &AppState, settings: RadarSettings) ->
 
 /// The radar window shows nothing ("only when a cube is on it" with no cube)
 /// or shows again: clicks pass through while it is invisible.
-#[tauri::command]
+/// Async: off the main thread, which may be waited on while the state lock
+/// is held (an engine restart asks it for the monitors).
+#[tauri::command(async)]
 fn set_radar_hidden(app: AppHandle, state: State<'_, AppState>, hidden: bool) {
     let settings = {
         let mut inner = state.lock();

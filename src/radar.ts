@@ -27,8 +27,10 @@ let size = { w: 0, h: 0, dpr: 1 };
 const alertGate = new AlertGate();
 const beeper = new ProximityBeeper();
 const autoHide = new AutoHide();
-/** What the window was last told: shown, or invisible and click-through. */
-let radarShown = true;
+/** What the window was last told: shown, or invisible and click-through.
+ * Unknown at start (after a reload the Rust side may still say hidden), so
+ * the first frame always tells it. */
+let radarShown: boolean | null = null;
 
 // The live game minimap, drawn behind the radar.
 let background: MinimapBackground | null = null;
@@ -118,10 +120,18 @@ function maybeBeep(frame: RadarFrame | null, backendSilent: boolean, now: number
 let settingsLoaded = false;
 
 function applySettings(s: RadarSettings): void {
+  const wasOn = autoHideOn();
   const switched = settingsLoaded && s.hideWhenEmpty !== settings.hideWhenEmpty;
   settings = s;
+  const nowOn = autoHideOn();
+  if (settingsLoaded && radarShown !== null) {
+    // Applying settings resets the window's click-through from the Rust
+    // side; say again what the radar shows, so a show/hide that crossed it
+    // is not lost.
+    sendShown(radarShown);
+  }
   settingsLoaded = true;
-  if (switched && s.windowMode === "overlay") {
+  if (!backend.isPreview && s.windowMode === "overlay" && (switched || (nowOn && !wasOn))) {
     // Shown for a moment either way, so the switch (Ctrl+Tab) is seen.
     autoHide.reveal(performance.now(), 2000);
     showToast(s.hideWhenEmpty ? "Radar shows only when a cube is on it" : "Radar always shown", 2000);
@@ -196,7 +206,10 @@ function render(): void {
 
   setBanner(bannerText(frame, backendSilent));
   if (!backend.isPreview) maybeBeep(frame, backendSilent, now);
-  showRadar(autoHide.visible(autoHideOn(), cubesDrawn, now));
+  // A broken source shows the radar with its error, rather than looking like
+  // an empty radar.
+  const failing = frame?.source?.state === "error";
+  showRadar(autoHide.visible(autoHideOn(), cubesDrawn, now) || failing);
   requestAnimationFrame(render);
 }
 
@@ -211,6 +224,10 @@ function showRadar(shown: boolean): void {
   if (shown === radarShown) return;
   radarShown = shown;
   document.body.classList.toggle("auto-hidden", !shown);
+  sendShown(shown);
+}
+
+function sendShown(shown: boolean): void {
   backend.setRadarHidden(!shown).catch((e) => console.error("radar visibility", e));
 }
 
@@ -290,7 +307,10 @@ async function main(): Promise<void> {
     maybeAlert(frame, cur.at);
   });
 
-  await backend.onMarker((message) => showToast(message));
+  await backend.onMarker((message) => {
+    autoHide.reveal(performance.now(), 1500);
+    showToast(message);
+  });
 
   document.querySelector("#btn-settings")!.addEventListener("click", () => {
     backend.openSettingsWindow().catch((e) => console.error(e));
