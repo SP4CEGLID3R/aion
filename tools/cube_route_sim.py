@@ -24,6 +24,11 @@ spawners ("groups") and their candidate spots. One server, no channels.
   second of travel plus loop.
 
     python3 tools/cube_route_sim.py mapdata.json --sims 10000
+    python3 tools/cube_route_sim.py mapdata.json --sims 100000 --competition high \
+        --focused --workers 4
+
+--competition high: fresh cubes survive other players only 20 s - 2 min.
+--focused: the AFK spots, the best areas and the optimised loops only.
 """
 
 import argparse
@@ -31,6 +36,7 @@ import json
 import math
 import re
 import time
+from multiprocessing import Pool
 
 import numpy as np
 
@@ -203,15 +209,19 @@ class Map:
         return sum(r == region for r in self.group_region)
 
 
+COMPETITION = {"any": (20, 20 * 60), "high": (20, 120)}
+
+
 class World:
-    def __init__(self, m, n, seed):
+    def __init__(self, m, n, seed, competition="any"):
         rng = np.random.default_rng(seed)
         g = len(m.spots)
         self.m, self.n = m, n
         self.speed = rng.uniform(8, 14, n) / DETOUR
         self.delay_median = np.exp(rng.uniform(math.log(5 * 60), math.log(90 * 60), n))
         self.group_delay = self.delay_median[:, None] * rng.lognormal(0, 0.4, (n, g))
-        self.others_mean = np.exp(rng.uniform(math.log(20), math.log(20 * 60), n))
+        lo, hi = COMPETITION[competition]
+        self.others_mean = np.exp(rng.uniform(math.log(lo), math.log(hi), n))
         self.famous_crowd = rng.uniform(1, 3, n)
         famous = np.array([r == FAMOUS for r in m.group_region])
         self.others_t = self.others_mean[:, None] / np.where(famous[None, :], self.famous_crowd[:, None], 1.0)
@@ -336,6 +346,40 @@ def _collect(world, rng, active, timer, pos, me, flying, pause, got):
     timer[s, g] = world.group_delay[s, g] * rng.uniform(0.5, 1.5, len(s))
 
 
+def afk_spots(m, k=6, apart=300.0):
+    """Standing points with the most cube value within radar range."""
+    p = m.all_spots
+    xs = np.arange(p[:, 0].min() - RADAR_M, p[:, 0].max() + RADAR_M, 10.0)
+    zs = np.arange(p[:, 1].min() - RADAR_M, p[:, 1].max() + RADAR_M, 10.0)
+    grid = np.array(np.meshgrid(xs, zs)).reshape(2, -1).T
+    val = np.zeros(len(grid))
+    for i in range(0, len(grid), 4000):
+        near = np.linalg.norm(grid[i : i + 4000, None] - p[None], axis=2) < RADAR_M
+        val[i : i + 4000] = near @ m.spot_weight
+    picked = []
+    for j in np.argsort(-val):
+        if all(np.linalg.norm(grid[j] - grid[q]) > apart for q in picked):
+            picked.append(j)
+        if len(picked) == k:
+            break
+    return [(grid[j], float(val[j])) for j in picked]
+
+
+def focused(m):
+    c = {}
+    for i, (pt, _) in enumerate(afk_spots(m)):
+        c[f"AFK spot #{i + 1}"] = ("afk", pt)
+    for r in ("West Gribade Canyon", "Gribade Canyon", "Fafnite Deposit", "Fierce Fight Hill",
+              "Unnamed Cemetery", "Tranein Hill Land", FAMOUS):
+        if r in m.regions:
+            c[f"Camp {r}"] = [r]
+    c["Gribade: West Gribade + Gribade + Fafnite"] = [
+        r for r in ("West Gribade Canyon", "Gribade Canyon", "Fafnite Deposit") if r in m.regions]
+    for km in (0.6, 0.8, 1, 1.2, 1.5, 2, 3, 4, 6):
+        c[f"Optimised loop <= {km:g} km"] = ("best", km * 1000.0)
+    return c
+
+
 def candidates(m):
     """name -> list of areas (fixed loop) or ('smart', areas)."""
     regs = m.regions
@@ -374,78 +418,110 @@ def describe(m, route):
     return dict(sorted(out.items(), key=lambda kv: -kv[1]))
 
 
+def build(m, spec):
+    """The fixed route of a candidate, or None for a smart rotation."""
+    if isinstance(spec, tuple) and spec[0] == "afk":
+        return Route(np.array([spec[1], spec[1] + 0.01]))
+    if isinstance(spec, tuple) and spec[0] == "best":
+        return best_loop(m, spec[1])
+    if isinstance(spec, tuple):
+        return None
+    return build_route([m.spots_of(r) for r in spec])
+
+
+def simulate_chunk(job):
+    path, cands, n, seed, competition = job
+    m = Map(path)
+    world = World(m, n, seed, competition)
+    region_route = {r: build_route([m.spots_of(r)]) for r in m.regions}
+    out = {}
+    for i, (name, spec) in enumerate(cands.items()):
+        route = build(m, spec)
+        if route is None:
+            regs = spec[1]
+            out[name] = run_smart(world, regs, [region_route[r] for r in regs], seed + 100 + i)
+        else:
+            out[name] = run_fixed(world, route, seed + 100 + i)
+    return out, world.others_mean, world.delay_median, world.famous_crowd
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("mapdata")
     ap.add_argument("--sims", type=int, default=10000)
     ap.add_argument("--seed", type=int, default=20261018)
+    ap.add_argument("--competition", choices=sorted(COMPETITION), default="any")
+    ap.add_argument("--focused", action="store_true")
+    ap.add_argument("--workers", type=int, default=1)
+    ap.add_argument("--chunk", type=int, default=5000)
     ap.add_argument("--only", default="", help="comma-separated candidate names")
     ap.add_argument("--json", default="")
     args = ap.parse_args()
     m = Map(args.mapdata)
-    print(f"{m.name}: {len(m.spots)} groups, {m.n_spots.sum()} spots, {len(m.regions)} areas\n")
-    cands = candidates(m)
+    print(f"{m.name}: {len(m.spots)} groups, {m.n_spots.sum()} spots, {len(m.regions)} areas; "
+          f"competition {args.competition}; {args.sims} sessions\n", flush=True)
+    cands = focused(m) if args.focused else candidates(m)
     if args.only:
         keep = [x.strip() for x in args.only.split(",")]
         cands = {k: v for k, v in cands.items() if k in keep}
-    region_route = {r: build_route([m.spots_of(r)]) for r in m.regions}
-    world = World(m, args.sims, args.seed)
-    results, info = {}, {}
-    for i, (name, spec) in enumerate(cands.items()):
-        t0 = time.time()
-        if isinstance(spec, tuple) and spec[0] == "best":
-            route = best_loop(m, spec[1])
-            results[name] = run_fixed(world, route, args.seed + 100 + i)
-            info[name] = {"groups": coverage(m, route), "loop_m": route.length, "areas": describe(m, route)}
-        elif isinstance(spec, tuple):
-            regs = spec[1]
-            results[name] = run_smart(world, regs, [region_route[r] for r in regs], args.seed + 100 + i)
-            info[name] = {"groups": sum(m.groups_in(r) for r in regs), "loop_m": None}
+    info = {}
+    for name, spec in cands.items():
+        route = build(m, spec)
+        if route is None:
+            info[name] = {"groups": sum(m.groups_in(r) for r in spec[1]), "loop_m": None}
         else:
-            route = build_route([m.spots_of(r) for r in spec])
-            results[name] = run_fixed(world, route, args.seed + 100 + i)
-            info[name] = {"groups": coverage(m, route), "loop_m": route.length, "areas": describe(m, route)}
-        lm = info[name]["loop_m"]
-        print(
-            f"{name:46s} groups {info[name]['groups']:5.1f} loop {('%5.1f km' % (lm / 1000)) if lm else '   -    '}"
-            f"  {results[name].mean():5.2f} cubes/h  ({time.time() - t0:.0f} s)",
-            flush=True,
-        )
-    names = list(results)
+            info[name] = {"groups": coverage(m, route), "loop_m": route.length,
+                          "areas": describe(m, route), "start": [round(float(v), 1) for v in route.pts[0]]}
+    jobs = []
+    left, k = args.sims, 0
+    while left > 0:
+        n = min(args.chunk, left)
+        jobs.append((args.mapdata, cands, n, args.seed + 1000 * k, args.competition))
+        left -= n
+        k += 1
+    t0 = time.time()
+    parts = []
+    with Pool(max(1, args.workers)) as pool:
+        for j, part in enumerate(pool.imap(simulate_chunk, jobs)):
+            parts.append(part)
+            print(f"chunk {j + 1}/{len(jobs)} done ({time.time() - t0:.0f} s)", flush=True)
+    names = list(cands)
+    results = {k: np.concatenate([p[0][k] for p in parts]) for k in names}
+    others = np.concatenate([p[1] for p in parts])
+    delay = np.concatenate([p[2] for p in parts])
+    crowd = np.concatenate([p[3] for p in parts])
     per_hour = np.stack([results[k] for k in names])
     best = np.argmax(per_hour + 1e-9 * np.random.default_rng(0).random(per_hour.shape), axis=0)
     top = np.maximum(per_hour.max(axis=0), 1e-9)
-    print(f"\n{'route':46s} {'mean':>5s} {'p10':>5s} {'p90':>5s} {'best in':>8s} {'of best':>8s}")
+    print(f"\n{'route':44s} {'groups':>6s} {'loop':>7s} {'mean':>6s} {'±95%':>5s} {'p10':>5s} {'p90':>5s} {'best in':>8s} {'of best':>8s}")
     order = np.argsort(-per_hour.mean(axis=1))
-    out = {"map": m.name, "sims": args.sims, "routes": {}, "scenarios": {}}
+    out = {"map": m.name, "sims": int(per_hour.shape[1]), "competition": args.competition, "routes": {}, "scenarios": {}}
     for j in order:
         v = per_hour[j]
-        r = {
-            "mean": float(v.mean()),
-            "p10": float(np.percentile(v, 10)),
-            "p90": float(np.percentile(v, 90)),
-            "best_in": float((best == j).mean()),
-            "share_of_best": float(np.mean(v / top)),
-            **info[names[j]],
-        }
+        r = {"mean": float(v.mean()), "ci95": float(1.96 * v.std() / math.sqrt(len(v))),
+             "p10": float(np.percentile(v, 10)), "p90": float(np.percentile(v, 90)),
+             "best_in": float((best == j).mean()), "share_of_best": float(np.mean(v / top)), **info[names[j]]}
         out["routes"][names[j]] = r
-        print(f"{names[j]:46s} {r['mean']:5.2f} {r['p10']:5.2f} {r['p90']:5.2f} {r['best_in']:8.1%} {r['share_of_best']:8.1%}")
+        lm = r["loop_m"]
+        loop = f"{lm / 1000:5.2f}km" if lm and lm > 1 else ("  stand" if lm else "      -")
+        print(f"{names[j]:44s} {r['groups']:6.2f} {loop:>7s} {r['mean']:6.2f} {r['ci95']:5.2f} {r['p10']:5.2f} {r['p90']:5.2f}"
+              f" {r['best_in']:8.1%} {r['share_of_best']:8.1%}")
+    lo, hi = COMPETITION[args.competition]
+    mid = math.sqrt(lo * hi)
     scen = {
-        "little competition (cubes last >5 min)": world.others_mean > 300,
-        "medium competition (1-5 min)": (world.others_mean >= 60) & (world.others_mean <= 300),
-        "heavy competition (<1 min)": world.others_mean < 60,
-        "fast respawn (<15 min)": world.delay_median < 900,
-        "medium respawn (15-45 min)": (world.delay_median >= 900) & (world.delay_median <= 2700),
-        "slow respawn (>45 min)": world.delay_median > 2700,
-        "Dredgion crowded (>2x)": world.famous_crowd > 2,
-        "Dredgion not crowded (<1.3x)": world.famous_crowd < 1.3,
+        f"harder competition (cubes last <{mid:.0f} s)": others < mid,
+        f"softer competition (cubes last >{mid:.0f} s)": others >= mid,
+        "fast respawn (<15 min)": delay < 900,
+        "medium respawn (15-45 min)": (delay >= 900) & (delay <= 2700),
+        "slow respawn (>45 min)": delay > 2700,
+        "Dredgion crowded (>2x)": crowd > 2,
     }
     for label, mask in scen.items():
         means = per_hour[:, mask].mean(axis=1)
         wins = np.bincount(best[mask], minlength=len(names)) / max(mask.sum(), 1)
         o = np.argsort(-means)
         out["scenarios"][label] = [[names[j], float(means[j]), float(wins[j])] for j in o]
-        print(f"\n{label} ({int(mask.sum())}): " + ", ".join(f"{names[j]} {means[j]:.2f} ({wins[j]:.0%})" for j in o[:3]))
+        print(f"\n{label} ({int(mask.sum())}): " + ", ".join(f"{names[j]} {means[j]:.2f} ({wins[j]:.0%})" for j in o[:4]))
     if args.json:
         with open(args.json, "w") as f:
             json.dump(out, f, indent=1)
